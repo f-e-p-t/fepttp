@@ -2,7 +2,16 @@
 #include <winsock2.h>
 #include <stdio.h>
 #include <string>
-#include <vector>uji9
+#include <vector>
+#include <chrono>
+
+#define IDLE_TIMEOUT_S 3;
+#define IDLE_TIMEOUT_ADDITIONAL_MS 0;
+
+struct SOCKET_AND_LASTUSE {
+    SOCKET sock;
+    std::time_t lastuse_time;
+};
 
 class Fepttp{
 public:
@@ -15,6 +24,9 @@ public:
     }
 
     void run(){
+        idle_timeout.tv_sec = IDLE_TIMEOUT_S;
+        idle_timeout.tv_usec = IDLE_TIMEOUT_ADDITIONAL_MS;
+
         while(true){
             fd_set open_sockets_read; // Set of sockets to be checked for readability
             fd_set open_sockets_write; // ... writeability
@@ -22,15 +34,29 @@ public:
             FD_ZERO(&open_sockets_write);
             FD_SET(listening_socket, &open_sockets_read); // Add the listening socket to the potentially readable set
 
-            for(SOCKET sock : connections){
-                FD_SET(sock, &open_sockets_read); // Fill up both lists from connections vector
-                FD_SET(sock, &open_sockets_write);
+            for(SOCKET_AND_LASTUSE sock : connections){
+                FD_SET(sock.sock, &open_sockets_read); // Fill up both lists from connections vector
+                FD_SET(sock.sock, &open_sockets_write);
             }
 
-            // Parameter 5: time until thread is woken up automatically. Otherwise, it is only woken up by I/O
-            // It will wake up to close the sockets whose idle timeout is expired (not implemented yet)
-            // Think: 'when do I need to wake up even if the network is silent?'
-            select(0, &open_sockets_read, &open_sockets_write, nullptr, nullptr); // CHANGE PARAM 5 FROM NULLPTR
+            // Filter the socket lists and leave only those that are readable resp. writeable
+            if(select(0, &open_sockets_read, &open_sockets_write, nullptr, &idle_timeout) == SOCKET_ERROR){
+                std::cout << "Error checking sockets for readability and writeability. Error: " << WSAGetLastError() << std::endl;
+                std::exit(1);
+            }
+
+            // Accept a new connection from the listening socket's accept queue, if there is one
+            SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
+            if(new_socket == INVALID_SOCKET){
+                auto error = WSAGetLastError();
+                if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
+                    //std::cout << "Empty accept queue" << std::endl;
+                } else{
+                    std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
+                }
+            } else{
+                std::cout << new_socket << std::endl;
+            }
         }
     }
 private:
@@ -39,9 +65,9 @@ private:
     u_long iMode = 1; // Non-blocking mode
     sockaddr_in address;
     int bind_result;
+    timeval idle_timeout;
 
-    // CREATE A NEW STRUCT TO ATTACH LAST-ACTIVITY TAGS TOO EACH SOCKET. USE TO IMPLEMENT IDLE TIMEOUT
-    std::vector<SOCKET> connections; // Contains all current open TCP connections
+    std::vector<SOCKET_AND_LASTUSE> connections; // Contains all current open TCP connections, and the time of their last uses
 
     // Create the listening socket
     int startServer(int PORT){
