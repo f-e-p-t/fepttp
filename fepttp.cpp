@@ -2,26 +2,46 @@
 #include <winsock2.h>
 #include <stdio.h>
 #include <string>
+#include <vector>uji9
 
 class Fepttp{
 public:
     Fepttp(int PORT){
-        startServer(PORT); // CONSTRUCTOR SHOULD NOT RUN THE EVENT LOOP.
+        startServer(PORT);
     }
 
     ~Fepttp(){
         closeServer();
     }
 
-    int run(){
-        // Event loop here
+    void run(){
+        while(true){
+            fd_set open_sockets_read; // Set of sockets to be checked for readability
+            fd_set open_sockets_write; // ... writeability
+            FD_ZERO(&open_sockets_read); // Clears both lists of sockets
+            FD_ZERO(&open_sockets_write);
+            FD_SET(listening_socket, &open_sockets_read); // Add the listening socket to the potentially readable set
+
+            for(SOCKET sock : connections){
+                FD_SET(sock, &open_sockets_read); // Fill up both lists from connections vector
+                FD_SET(sock, &open_sockets_write);
+            }
+
+            // Parameter 5: time until thread is woken up automatically. Otherwise, it is only woken up by I/O
+            // It will wake up to close the sockets whose idle timeout is expired (not implemented yet)
+            // Think: 'when do I need to wake up even if the network is silent?'
+            select(0, &open_sockets_read, &open_sockets_write, nullptr, nullptr); // CHANGE PARAM 5 FROM NULLPTR
+        }
     }
 private:
-    SOCKET listeningSocket;
+    SOCKET listening_socket;
     WSADATA _wsa;
-    u_long iMode = 1; // Non-blocking
+    u_long iMode = 1; // Non-blocking mode
     sockaddr_in address;
-    int bindResult;
+    int bind_result;
+
+    // CREATE A NEW STRUCT TO ATTACH LAST-ACTIVITY TAGS TOO EACH SOCKET. USE TO IMPLEMENT IDLE TIMEOUT
+    std::vector<SOCKET> connections; // Contains all current open TCP connections
 
     // Create the listening socket
     int startServer(int PORT){
@@ -34,14 +54,14 @@ private:
         }
         
         // Create socket to be listened on
-        listeningSocket = socket(AF_INET, SOCK_STREAM, 0);
-        if(listeningSocket == INVALID_SOCKET){
+        listening_socket = socket(AF_INET, SOCK_STREAM, 0);
+        if(listening_socket == INVALID_SOCKET){
             std::cout << "Socket creation failed. Error: " << WSAGetLastError() << std::endl;
             std::exit(1);
         }
 
         // Set listening socket to non-blocking mode
-        if(ioctlsocket(listeningSocket, FIONBIO, &iMode) != 0){
+        if(ioctlsocket(listening_socket, FIONBIO, &iMode) != 0){
             std::cout << "ioctlsocket failed. Error: " << WSAGetLastError() << std::endl;
             std::exit(1);
         }
@@ -52,17 +72,17 @@ private:
         address.sin_port = htons(PORT);
 
         // Bind listening socket to a port
-        bindResult = bind(listeningSocket, (SOCKADDR*) &address, sizeof(address));
-        if(bindResult == SOCKET_ERROR){
+        bind_result = bind(listening_socket, (SOCKADDR*) &address, sizeof(address));
+        if(bind_result == SOCKET_ERROR){
             std::cout << "Bind listening socket failed. Error: " << WSAGetLastError() << std::endl;
-            bindResult = closesocket(listeningSocket);
-            if(bindResult == SOCKET_ERROR){
+            bind_result = closesocket(listening_socket);
+            if(bind_result == SOCKET_ERROR){
                 std::cout << "Close listening socket failed. Error: " << WSAGetLastError() << std::endl;
             }
             std::exit(1);
         }
 
-        if(listen(listeningSocket, SOMAXCONN) == SOCKET_ERROR){ // SOMAXCONN is the maximum backlog (connection queue) size
+        if(listen(listening_socket, SOMAXCONN) == SOCKET_ERROR){ // SOMAXCONN is the maximum backlog (connection queue) size
             std::cout << "Listen failed. Error: " << WSAGetLastError();
             std::exit(1);
         }
@@ -71,15 +91,15 @@ private:
     }
 
     int closeServer(){
-        closesocket(listeningSocket); WSACleanup();
+        closesocket(listening_socket); WSACleanup();
         return 0;
     }
 };
 
 int main(){
-    Fepttp app = Fepttp(8000);
+    Fepttp server = Fepttp(8000);
 
-    app.run();
+    server.run();
 
     return 0;
 }
