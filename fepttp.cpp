@@ -5,7 +5,7 @@
 #include <vector>
 #include <chrono>
 
-#define IDLE_TIMEOUT_S 3;
+#define IDLE_TIMEOUT_S 5;
 #define IDLE_TIMEOUT_ADDITIONAL_MS 0;
 
 struct SOCKET_AND_LASTUSE {
@@ -28,34 +28,47 @@ public:
         idle_timeout.tv_usec = IDLE_TIMEOUT_ADDITIONAL_MS;
 
         while(true){
+            // Accept a new connection from the listening socket's accept queue, if there is one
+            SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
+            if(new_socket == INVALID_SOCKET){
+                auto error = WSAGetLastError();
+                if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
+                    std::cout << "Empty accept queue" << std::endl;
+                } else{
+                    std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
+                }
+            } else{
+                // Add the new socket to the connections vector
+                std::cout << new_socket << std::endl;
+                auto _current_time = std::chrono::system_clock::now();
+                std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
+                connections.push_back({new_socket, current_time});
+            }
+
+            // Note
             fd_set open_sockets_read; // Set of sockets to be checked for readability
             fd_set open_sockets_write; // ... writeability
             FD_ZERO(&open_sockets_read); // Clears both lists of sockets
             FD_ZERO(&open_sockets_write);
             FD_SET(listening_socket, &open_sockets_read); // Add the listening socket to the potentially readable set
 
+            // Fill up both lists from connections vector
             for(SOCKET_AND_LASTUSE sock : connections){
-                FD_SET(sock.sock, &open_sockets_read); // Fill up both lists from connections vector
+                FD_SET(sock.sock, &open_sockets_read);
                 FD_SET(sock.sock, &open_sockets_write);
             }
 
             // Filter the socket lists and leave only those that are readable resp. writeable
+            // select() updates .fd_count to the number of ready sockets, and shuffles the ready ones to the front indices of
+            // .fd_array. There is no meaningful rest of the set
             if(select(0, &open_sockets_read, &open_sockets_write, nullptr, &idle_timeout) == SOCKET_ERROR){
                 std::cout << "Error checking sockets for readability and writeability. Error: " << WSAGetLastError() << std::endl;
                 std::exit(1);
             }
 
-            // Accept a new connection from the listening socket's accept queue, if there is one
-            SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
-            if(new_socket == INVALID_SOCKET){
-                auto error = WSAGetLastError();
-                if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
-                    //std::cout << "Empty accept queue" << std::endl;
-                } else{
-                    std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
-                }
-            } else{
-                std::cout << new_socket << std::endl;
+            // Handle the readable sockets
+            for(int i = 0; i < open_sockets_read.fd_count; i++){
+                std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;   
             }
         }
     }
@@ -67,7 +80,8 @@ private:
     int bind_result;
     timeval idle_timeout;
 
-    std::vector<SOCKET_AND_LASTUSE> connections; // Contains all current open TCP connections, and the time of their last uses
+    // Contains all current open TCP connections, and the time of their last uses
+    std::vector<SOCKET_AND_LASTUSE> connections;
 
     // Create the listening socket
     int startServer(int PORT){
