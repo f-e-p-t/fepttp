@@ -4,9 +4,11 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <algorithm>
 
-#define IDLE_TIMEOUT_S 5;
-#define IDLE_TIMEOUT_ADDITIONAL_MS 0;
+#define IDLE_TIMEOUT_S 5
+#define IDLE_TIMEOUT_ADDITIONAL_MS 0
+#define RECV_BUFFER_LENGTH 16384
 
 struct SOCKET_AND_LASTUSE {
     SOCKET sock;
@@ -28,29 +30,12 @@ public:
         idle_timeout.tv_usec = IDLE_TIMEOUT_ADDITIONAL_MS;
 
         while(true){
-            // Accept a new connection from the listening socket's accept queue, if there is one
-            SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
-            if(new_socket == INVALID_SOCKET){
-                auto error = WSAGetLastError();
-                if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
-                    std::cout << "Empty accept queue" << std::endl;
-                } else{
-                    std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
-                }
-            } else{
-                // Add the new socket to the connections vector
-                std::cout << new_socket << std::endl;
-                auto _current_time = std::chrono::system_clock::now();
-                std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
-                connections.push_back({new_socket, current_time});
-            }
-
-            // Note
-            fd_set open_sockets_read; // Set of sockets to be checked for readability
-            fd_set open_sockets_write; // ... writeability
-            FD_ZERO(&open_sockets_read); // Clears both lists of sockets
+            // Declare and clear lists of readable and writeable sockets. Add the listening socket to readable
+            fd_set open_sockets_read;
+            fd_set open_sockets_write;
+            FD_ZERO(&open_sockets_read);
             FD_ZERO(&open_sockets_write);
-            FD_SET(listening_socket, &open_sockets_read); // Add the listening socket to the potentially readable set
+            FD_SET(listening_socket, &open_sockets_read);
 
             // Fill up both lists from connections vector
             for(SOCKET_AND_LASTUSE sock : connections){
@@ -68,17 +53,72 @@ public:
 
             // Handle the readable sockets
             for(int i = 0; i < open_sockets_read.fd_count; i++){
-                std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;   
+                std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;
+
+                // If the listening socket is readable
+                if(open_sockets_read.fd_array[i] == listening_socket){
+                    SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
+
+                    if(new_socket == INVALID_SOCKET){
+                        auto error = WSAGetLastError();
+                        if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
+                            std::cout << "Empty accept queue" << std::endl;
+                        } else{
+                            std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
+                        }
+
+                    } else{
+                        // Add the new socket to the connections vector
+                        std::cout << "Opened new socket: " << new_socket << std::endl;
+                        auto _current_time = std::chrono::system_clock::now();
+                        std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
+                        connections.push_back({new_socket, current_time});
+                    }
+
+                // The readable connected sockets
+                } else{
+                    int bytes_received = recv(open_sockets_read.fd_array[i], recv_buffer, recv_buffer_length, 0);
+                    if(bytes_received == SOCKET_ERROR){
+                        std::cout << "Error recieving data from socket " << open_sockets_read.fd_array[i] << ". Error: " <<
+                        WSAGetLastError() << std::endl;
+                        std::exit(1);
+                    } else if(bytes_received == 0){
+                        closesocket(open_sockets_read.fd_array[i]);
+                        remove_socket_from_connections(open_sockets_read.fd_array[i]);
+                        std::cout << "Closed socket: " << open_sockets_read.fd_array[i] << std::endl;
+                    } else{
+                        std::cout << recv_buffer << std::endl << "--> from socket " << open_sockets_read.fd_array[i] << std::endl;
+                        // UPDATE THE LAST USE IN THE CONNECTIONS VECTOR
+                    }
+                }
             }
         }
     }
 private:
     SOCKET listening_socket;
     WSADATA _wsa;
-    u_long iMode = 1; // Non-blocking mode
+    u_long imode = 1; // Non-blocking mode
     sockaddr_in address;
     int bind_result;
     timeval idle_timeout;
+    char recv_buffer[RECV_BUFFER_LENGTH];
+    int recv_buffer_length = RECV_BUFFER_LENGTH;
+
+    void remove_socket_from_connections(SOCKET sock){
+        auto iterator = std::find_if(connections.begin(), connections.end(),
+            [&](const SOCKET_AND_LASTUSE entry){
+                return entry.sock == sock;
+            }
+        );
+
+        if(iterator != connections.end()){
+            auto removal_index = iterator - connections.begin();
+            connections.erase(connections.begin() + removal_index);
+        }
+    }
+
+    // CREATE A FUNCTION THAT UPDATES LASTUSE IN THE CONNECTIONS VECTOR
+
 
     // Contains all current open TCP connections, and the time of their last uses
     std::vector<SOCKET_AND_LASTUSE> connections;
@@ -101,7 +141,7 @@ private:
         }
 
         // Set listening socket to non-blocking mode
-        if(ioctlsocket(listening_socket, FIONBIO, &iMode) != 0){
+        if(ioctlsocket(listening_socket, FIONBIO, &imode) != 0){
             std::cout << "ioctlsocket failed. Error: " << WSAGetLastError() << std::endl;
             std::exit(1);
         }
