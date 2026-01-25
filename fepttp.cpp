@@ -8,7 +8,8 @@
 
 #define IDLE_TIMEOUT_S 5
 #define IDLE_TIMEOUT_ADDITIONAL_MS 0
-#define RECV_BUFFER_LENGTH 16384
+#define RECV_BUFFER_LENGTH 64
+#define SEND_BUFFER_LENGTH 64
 
 struct SOCKET_AND_LASTUSE {
     SOCKET sock;
@@ -43,9 +44,7 @@ public:
                 FD_SET(sock.sock, &open_sockets_write);
             }
 
-            // Filter the socket lists and leave only those that are readable resp. writeable
-            // select() updates .fd_count to the number of ready sockets, and shuffles the ready ones to the front indices of
-            // .fd_array. There is no meaningful rest of the set
+            // Filter the socket lists and shift the readable resp. writeable ones to the front. Adjust length accordingly
             if(select(0, &open_sockets_read, &open_sockets_write, nullptr, &idle_timeout) == SOCKET_ERROR){
                 std::cout << "Error checking sockets for readability and writeability. Error: " << WSAGetLastError() << std::endl;
                 std::exit(1);
@@ -53,43 +52,67 @@ public:
 
             // Handle the readable sockets
             for(int i = 0; i < open_sockets_read.fd_count; i++){
-                std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;
+                //std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;
 
-                // If the listening socket is readable
+                // The listening socket
                 if(open_sockets_read.fd_array[i] == listening_socket){
                     SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
 
+                    // Handle different error types
                     if(new_socket == INVALID_SOCKET){
                         auto error = WSAGetLastError();
-                        if(error == WSAEWOULDBLOCK){ // If the error is an empty queue
+                        if(error == WSAEWOULDBLOCK){
                             std::cout << "Empty accept queue" << std::endl;
                         } else{
                             std::cout << "Error accepting from the accept queue. Error: " << error << std::endl;
+                            continue;
                         }
 
+                    // Add the new socket to the connections vector
                     } else{
-                        // Add the new socket to the connections vector
-                        std::cout << "Opened new socket: " << new_socket << std::endl;
+                        //std::cout << "Opened new socket: " << new_socket << std::endl;
                         auto _current_time = std::chrono::system_clock::now();
                         std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
                         connections.push_back({new_socket, current_time});
                     }
 
-                // The readable connected sockets
+                // The connected sockets
                 } else{
                     int bytes_received = recv(open_sockets_read.fd_array[i], recv_buffer, recv_buffer_length, 0);
+
+                    // Handle different error types
                     if(bytes_received == SOCKET_ERROR){
-                        std::cout << "Error recieving data from socket " << open_sockets_read.fd_array[i] << ". Error: " <<
-                        WSAGetLastError() << std::endl;
-                        std::exit(1);
+                        auto error = WSAGetLastError();
+                        if(error == WSAEWOULDBLOCK){
+                            continue;
+                        } else{
+                            std::cout << "Error recieving data from socket " << open_sockets_read.fd_array[i] << ". Error: " <<
+                            error << ". Closing socket" << std::endl;
+                            closesocket(open_sockets_read.fd_array[i]);
+                            remove_socket_from_connections(open_sockets_read.fd_array[i]);
+                            continue;                    
+                        }
+                    
+                    // i.e. TCP connection terminated
                     } else if(bytes_received == 0){
                         closesocket(open_sockets_read.fd_array[i]);
                         remove_socket_from_connections(open_sockets_read.fd_array[i]);
                         std::cout << "Closed socket: " << open_sockets_read.fd_array[i] << std::endl;
+
+                    // If data was successfully received
                     } else{
-                        std::cout << recv_buffer << std::endl << "--> from socket " << open_sockets_read.fd_array[i] << std::endl;
-                        // UPDATE THE LAST USE IN THE CONNECTIONS VECTOR
+                        std::cout.write(recv_buffer, bytes_received);
+                        update_socket_lastuse_connections(open_sockets_read.fd_array[i]);
                     }
+                }
+            }
+
+            // Handle writeable sockets
+            for(int i = 0; i < open_sockets_write.fd_count; i++){
+                //std::cout << "Socket ready for writing at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;
+                int bytes_sent = send(open_sockets_write.fd_array[i], send_buffer, send_buffer_length, 0);
+                if(bytes_sent == SOCKET_ERROR){
+                    // handle ts
                 }
             }
         }
@@ -103,6 +126,8 @@ private:
     timeval idle_timeout;
     char recv_buffer[RECV_BUFFER_LENGTH];
     int recv_buffer_length = RECV_BUFFER_LENGTH;
+    char send_buffer[SEND_BUFFER_LENGTH];
+    int send_buffer_length = SEND_BUFFER_LENGTH;
 
     void remove_socket_from_connections(SOCKET sock){
         auto iterator = std::find_if(connections.begin(), connections.end(),
@@ -117,15 +142,28 @@ private:
         }
     }
 
-    // CREATE A FUNCTION THAT UPDATES LASTUSE IN THE CONNECTIONS VECTOR
+    void update_socket_lastuse_connections(SOCKET sock){
+        auto iterator = std::find_if(connections.begin(), connections.end(),
+            [&](const SOCKET_AND_LASTUSE entry){
+                return entry.sock == sock;
+            }
+        );
 
+        if(iterator != connections.end()){
+            auto _current_time = std::chrono::system_clock::now();
+            std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
+
+            auto lastuse_update_index = iterator - connections.begin();
+            connections[lastuse_update_index].lastuse_time = current_time;
+        }
+    }
 
     // Contains all current open TCP connections, and the time of their last uses
     std::vector<SOCKET_AND_LASTUSE> connections;
 
     // Create the listening socket
     int startServer(int PORT){
-        std::cout << "Starting server" << std::endl;
+        std::cout << "Starting server on port " << PORT << std::endl;
 
         // Initialise WSA
         if(WSAStartup(MAKEWORD(2, 2), &_wsa) != 0){
