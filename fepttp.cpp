@@ -12,10 +12,14 @@
 #define RECV_BUFFER_LENGTH 64
 #define SEND_BUFFER_LENGTH 64
 
+// MAKE A VARIABLE LENGTH BUFFER (STRING) THAT IS FILLED UP WITH FULL HTTP REQS BY THE SMALL BUFFER.
+// GIVE IT A SIZE CAP
+// MAKE SURE THIS WHOLE PROCESS IF COMPLETE BEFORE PROCEEDING TO THE NEXT SOCKET IN THE READABLE SOCKETS LOOPS
 struct SOCKET_AND_PROPS {
     SOCKET sock;
     std::time_t lastuse_time;
     char recv_buffer[RECV_BUFFER_LENGTH];
+    std::string request_buffer = "";
     char send_buffer[SEND_BUFFER_LENGTH];
 };
 
@@ -29,19 +33,19 @@ public:
         closeServer();
     }
 
-    void run(){
+    int run(){
         idle_timeout.tv_sec = IDLE_TIMEOUT_S;
         idle_timeout.tv_usec = IDLE_TIMEOUT_ADDITIONAL_MS;
 
         while(true){
-            // Declare and clear lists of readable and writeable sockets. Add the listening socket to readable
+            // Declare and clear fd_sets for readable and writeable sockets. Add the listening socket to readable
             fd_set open_sockets_read;
             fd_set open_sockets_write;
             FD_ZERO(&open_sockets_read);
             FD_ZERO(&open_sockets_write);
             FD_SET(listening_socket, &open_sockets_read);
 
-            // Fill up both lists from connections
+            // Fill up both lists from conn_map
             for(const auto& entry : conn_map){
                 FD_SET(entry.second.sock, &open_sockets_read);
                 FD_SET(entry.second.sock, &open_sockets_write);
@@ -50,20 +54,17 @@ public:
             // Filter the socket lists and shift the readable resp. writeable ones to the front. Adjust length accordingly
             if(select(0, &open_sockets_read, &open_sockets_write, nullptr, &idle_timeout) == SOCKET_ERROR){
                 std::cout << "Error checking sockets for readability and writeability. Error: " << WSAGetLastError() << std::endl;
-                std::exit(1);
+                return 1;
             }
 
-            // Handle the readable sockets
-            for(int i = 0; i < open_sockets_read.fd_count; i++){
+            for(int i = 0; i < open_sockets_read.fd_count; i++){ // Handle all of the readable sockets
                 const SOCKET sock = open_sockets_read.fd_array[i];
                 //std::cout << "Socket ready for reading at index " << i << ": " << open_sockets_read.fd_array[i] << std::endl;
 
-                // The listening socket
-                if(sock == listening_socket){
+                if(sock == listening_socket){ // The listening socket
                     SOCKET new_socket = accept(listening_socket, nullptr, nullptr);
 
-                    // Handle different error types
-                    if(new_socket == INVALID_SOCKET){
+                    if(new_socket == INVALID_SOCKET){ // Handle different error types
                         auto error = WSAGetLastError();
                         if(error == WSAEWOULDBLOCK){
                             std::cout << "Empty accept queue" << std::endl;
@@ -72,8 +73,7 @@ public:
                             continue;
                         }
 
-                    // Add the new socket to connections
-                    } else{
+                    } else{ // Add the new socket to conn_map
                         //std::cout << "Opened new socket: " << new_socket << std::endl;
                         auto _current_time = std::chrono::system_clock::now();
                         std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
@@ -82,34 +82,63 @@ public:
                         }});
                     }
 
-                // The connected sockets
-                } else{
-                    int bytes_received = recv(sock, conn_map[sock].recv_buffer, recv_buffer_length, 0);
+                } else{ // All other readable sockets
+                    bool request_in_progress = true;
+                    bool flag = false;
+                    conn_map[sock].request_buffer = "";
+                    while(request_in_progress){
+                        int bytes_received = recv(sock, conn_map[sock].recv_buffer, recv_buffer_length, 0);
+                        if(bytes_received == SOCKET_ERROR){
+                            auto error = WSAGetLastError();
+                            if(error == WSAEWOULDBLOCK){ flag = true; break; }
+                            else{
+                                std::cout << "Error receiving data from socket " << sock << ". Error: " << error <<
+                                ". Closing socket" << std::endl;
+                                closesocket(sock); conn_map.erase(sock); flag = true; break;
+                            }
 
-                    // Handle different error types
-                    if(bytes_received == SOCKET_ERROR){
-                        auto error = WSAGetLastError();
-                        if(error == WSAEWOULDBLOCK){
-                            continue;
-                        } else{
-                            std::cout << "Error recieving data from socket " << sock << ". Error: " <<
-                            error << ". Closing socket" << std::endl;
-                            closesocket(sock);
-                            conn_map.erase(sock);
-                            continue;
+                        } else if(bytes_received == 0){ // i.e. TCP connection terminated
+                            closesocket(sock); conn_map.erase(sock); std::cout << "Closed socket: " << sock << std::endl;
+                            flag = true; break;
+
+                        } else{ // If data was successfully received
+                            conn_map[sock].request_buffer.append(conn_map[sock].recv_buffer, bytes_received);
+                            //std::cout << conn_map[sock].recv_buffer;
+                            //std::cout.write(conn_map[sock].recv_buffer, bytes_received);
+                            //std::cout << conn_map[sock].request_buffer;
+                            set_socket_lastuse_conn_map(sock);
+
+                            // Time to write a function that returns instructions on how to find the end of HTTP req
                         }
-                    
-                    // i.e. TCP connection terminated
-                    } else if(bytes_received == 0){
-                        closesocket(sock);
-                        conn_map.erase(sock);
-                        std::cout << "Closed socket: " << sock << std::endl;
-
-                    // If data was successfully received
-                    } else{
-                        std::cout.write(conn_map[sock].recv_buffer, bytes_received);
-                        set_socket_lastuse_conn_map(sock);
                     }
+                    if(flag){ continue; }
+
+                    //int bytes_received = recv(sock, conn_map[sock].recv_buffer, recv_buffer_length, 0);
+                    //
+                    //// Handle different error types
+                    //if(bytes_received == SOCKET_ERROR){
+                    //    auto error = WSAGetLastError();
+                    //    if(error == WSAEWOULDBLOCK){
+                    //        continue;
+                    //    } else{
+                    //        std::cout << "Error receiving data from socket " << sock << ". Error: " <<
+                    //        error << ". Closing socket" << std::endl;
+                    //        closesocket(sock);
+                    //        conn_map.erase(sock);
+                    //        continue;
+                    //    }
+                    //
+                    //// i.e. TCP connection terminated
+                    //} else if(bytes_received == 0){
+                    //    closesocket(sock);
+                    //    conn_map.erase(sock);
+                    //    std::cout << "Closed socket: " << sock << std::endl;
+                    //
+                    //// If data was successfully received
+                    //} else{
+                    //    std::cout.write(conn_map[sock].recv_buffer, bytes_received);
+                    //    set_socket_lastuse_conn_map(sock);
+                    //}
                 }
             }
 
@@ -133,7 +162,7 @@ private:
         conn_map[sock].lastuse_time = current_time;
     }
 
-    // Contains all current open TCP connections, and certain properties of them
+    // Contains all current open TCP connections (sockets), and certain properties of them
     std::unordered_map<SOCKET, SOCKET_AND_PROPS> conn_map;
 
     // Create the listening socket
