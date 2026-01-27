@@ -12,9 +12,6 @@
 #define RECV_BUFFER_LENGTH 64
 #define SEND_BUFFER_LENGTH 64
 
-#define TRANSFER_ENCODING_CHUNKED -1
-#define NOT_TRA_ENC_CHU_CON_LEN -2
-
 // MAKE A VARIABLE LENGTH BUFFER (STRING) THAT IS FILLED UP WITH FULL HTTP REQS BY THE SMALL BUFFER.
 // GIVE IT A SIZE CAP
 // MAKE SURE THIS WHOLE PROCESS IF COMPLETE BEFORE PROCEEDING TO THE NEXT SOCKET IN THE READABLE SOCKETS LOOPS
@@ -89,21 +86,37 @@ public:
                 continue;
             }
 
-            if(bytes == 0){ // i.e. TCP connection terminated. Empty kernel buffer? Then you would get WSAEWOULDBLOCK
+            if(bytes == 0){ // i.e. TCP connection gracefully closed. Empty kernel buffer? Then you would get WSAEWOULDBLOCK
                 closesocket(sock); conn_map.erase(sock);
                 std::cout << "Closed socket: " << sock << std::endl;
                 continue;
             }
 
-            // Haven't broken yet - there is data in the buffer to be dealt with
+            // Haven't continued yet - there is data in the buffer to be dealt with
             conn_map[sock].request_buffer.append(recvbuf, bytes);
-            int _request_length = request_length(conn_map[sock].request_buffer);
             std::cout << conn_map[sock].request_buffer;
-            std::cout << _request_length << std::endl;
 
-            set_socket_lastuse_conn_map(sock);
+            set_socket_lastuse(sock);
 
-            // Time to write a function that returns instructions on how to find the end of HTTP req
+            // Idea for appropriately ending requests and getting the length right:
+            // On each buffer recv, check for the type of end it will be (transfer-encoding chunked, content-length, neither).
+            // Then search for the specific ending. A function should exist to handle all three possibilities.
+            // After completion, remember to shift the data in the buffer beyond the completed request to the front of the buffer.
+            // Set the end type on the socket back to something resembling 'undefined'. When returning to the for loop, everything
+            // should be ready to repeat the process.
+            // Q: what happens if the request fits in a single buffer recv?
+            // A: type of ending will be identified before the ending is searched for. Flow: the type of ending is identified,
+            // then the function that finds the ending based on type runs afterwards and finds the ending.
+            // Q: what happens if the buffer cuts the desired header in half? The whole header is never in the buffer at once?
+            // A: pass in the whole accumulated request string into the end type identifier and the ending finder.
+            // Q: what if a user sends an inifnite stream of requests so an end is never found?
+            // A: cap the length of the request accumulator.
+            // Q: how do you get the final string, cut off at the right index?
+            // A: the ending finder knows. Let the ending finder return the completed request string.
+            // Q: how do you actually move any spare data to the 'front' of the buffer?
+            // A: ...
+
+            // RENAME THE REQUEST_BUFFER TO SOMETHING USIN THE WORK ACCUMULATOR!!!
         }
     }
     }
@@ -116,24 +129,24 @@ private:
     timeval idle_timeout;
     int recv_buffer_length = RECV_BUFFER_LENGTH;
 
-    void set_socket_lastuse_conn_map(SOCKET sock){
+    void set_socket_lastuse(SOCKET sock){
         auto _current_time = std::chrono::system_clock::now();
         std::time_t current_time = std::chrono::system_clock::to_time_t(_current_time);
         conn_map[sock].lastuse_time = current_time;
     }
 
-    int request_length(std::string request){
-        auto index = request.find("Transfer-Encoding: chunked");
-        if(index != std::string::npos){ return TRANSFER_ENCODING_CHUNKED; }
-        index = request.find("Content-Length");
-        if(index != std::string::npos){
-            auto content_length_end = request.find("\r\n\r\n", index + 16);
-            auto content_length_length = content_length_end - index - 16;
-            return index + 16 + content_length_length + 4 + std::stoi(request.substr(index + 16, content_length_length));
-            //auto req_length = request.find()
-        }
-        return NOT_TRA_ENC_CHU_CON_LEN;
-    }
+    //int request_length(std::string request){
+    //    auto index = request.find("Transfer-Encoding: chunked");
+    //    if(index != std::string::npos){ return TRANSFER_ENCODING_CHUNKED; }
+    //    index = request.find("Content-Length");
+    //    if(index != std::string::npos){
+    //        auto content_length_end = request.find("\r\n\r\n", index + 16);
+    //        auto content_length_length = content_length_end - index - 16;
+    //        return index + 16 + content_length_length + 4 + std::stoi(request.substr(index + 16, content_length_length));
+    //        //auto req_length = request.find()
+    //    }
+    //    return NOT_TRA_ENC_CHU_CON_LEN;
+    //}
 
     // Contains all current open TCP connections (sockets), and certain properties of them
     std::unordered_map<SOCKET, SOCKET_AND_PROPS> conn_map;
