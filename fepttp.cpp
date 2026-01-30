@@ -19,7 +19,7 @@ struct SOCKET_AND_PROPS {
     SOCKET sock;
     std::time_t lastuse_time;
     char recv_buffer[RECV_BUFFER_LENGTH];
-    std::string request_buffer = "";
+    std::string req_accumulator = "";
     char send_buffer[SEND_BUFFER_LENGTH];
 };
 
@@ -93,30 +93,22 @@ public:
             }
 
             // Haven't continued yet - there is data in the buffer to be dealt with
-            conn_map[sock].request_buffer.append(recvbuf, bytes);
-            std::cout << conn_map[sock].request_buffer;
+            conn_map[sock].req_accumulator.append(recvbuf, bytes);
+            std::cout << conn_map[sock].req_accumulator;
 
             set_socket_lastuse(sock);
 
-            // Idea for appropriately ending requests and getting the length right:
-            // On each buffer recv, check for the type of end it will be (transfer-encoding chunked, content-length, neither).
-            // Then search for the specific ending. A function should exist to handle all three possibilities.
-            // After completion, remember to shift the data in the buffer beyond the completed request to the front of the buffer.
-            // Set the end type on the socket back to something resembling 'undefined'. When returning to the for loop, everything
-            // should be ready to repeat the process.
-            // Q: what happens if the request fits in a single buffer recv?
-            // A: type of ending will be identified before the ending is searched for. Flow: the type of ending is identified,
-            // then the function that finds the ending based on type runs afterwards and finds the ending.
-            // Q: what happens if the buffer cuts the desired header in half? The whole header is never in the buffer at once?
-            // A: pass in the whole accumulated request string into the end type identifier and the ending finder.
-            // Q: what if a user sends an inifnite stream of requests so an end is never found?
-            // A: cap the length of the request accumulator.
-            // Q: how do you get the final string, cut off at the right index?
-            // A: the ending finder knows. Let the ending finder return the completed request string.
-            // Q: how do you actually move any spare data to the 'front' of the buffer?
+            // Finding the request ending:
+            // Reject TE chunked requests. The body begins after Content-Length: X. If this header doesnt exist, then the request
+            // ends at "\r\n\r\n". Requests that only harm the user will be let through (the joke is on the user). Malicious
+            // requests that could harm the server will need to be dealt with.
+            // Q: What if the CL is honest but simply too large?
+            // A: Hardcap on the header and body size
+            // Q: What if a dishonest CL is injected before the real one?
+            // A: If you detect two CLs, reject the request. If the number is too small to reach the honest CL, then you are still
+            // within the request, so nothing can be smuggled.
+            // Q: What if a dishonest CL is injected in a request that has no body (so no CL)?
             // A: ...
-
-            // RENAME THE REQUEST_BUFFER TO SOMETHING USIN THE WORK ACCUMULATOR!!!
         }
     }
     }
