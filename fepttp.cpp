@@ -100,15 +100,17 @@ public:
 
             // Finding the request ending:
             // Reject TE chunked requests. The body begins after Content-Length: X. If this header doesnt exist, then the request
-            // ends at "\r\n\r\n". Requests that only harm the user will be let through (the joke is on the user). Malicious
-            // requests that could harm the server will need to be dealt with.
+            // ends at "\r\n\r\n".
             // Q: What if the CL is honest but simply too large?
-            // A: Hardcap on the header and body size
-            // Q: What if a dishonest CL is injected before the real one?
-            // A: If you detect two CLs, reject the request. If the number is too small to reach the honest CL, then you are still
-            // within the request, so nothing can be smuggled.
-            // Q: What if a dishonest CL is injected in a request that has no body (so no CL)?
-            // A: ...
+            // A: Hardcap on the header and body size.
+            // Q: What if a user injects an early CL: 1000000?
+            // A: Unconditionally the headers end after \r\n\r\n. If 1000000 is more than the body length cap, close the socket.
+            // Otherwise, take in 1000000 bytes as a request. This might cut into other requests on the socket, and the request
+            // will be messed up. This will be caught by the full parser, which will be called after the request is fully collected.
+            // The full parser will detect framing violations and close the socket immediately.
+
+            // How to put this in code:
+            // 
         }
     }
     }
@@ -127,18 +129,7 @@ private:
         conn_map[sock].lastuse_time = current_time;
     }
 
-    //int request_length(std::string request){
-    //    auto index = request.find("Transfer-Encoding: chunked");
-    //    if(index != std::string::npos){ return TRANSFER_ENCODING_CHUNKED; }
-    //    index = request.find("Content-Length");
-    //    if(index != std::string::npos){
-    //        auto content_length_end = request.find("\r\n\r\n", index + 16);
-    //        auto content_length_length = content_length_end - index - 16;
-    //        return index + 16 + content_length_length + 4 + std::stoi(request.substr(index + 16, content_length_length));
-    //        //auto req_length = request.find()
-    //    }
-    //    return NOT_TRA_ENC_CHU_CON_LEN;
-    //}
+
 
     // Contains all current open TCP connections (sockets), and certain properties of them
     std::unordered_map<SOCKET, SOCKET_AND_PROPS> conn_map;
