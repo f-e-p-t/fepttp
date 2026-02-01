@@ -1,3 +1,4 @@
+#include "config.h"
 #include <iostream>
 #include <winsock2.h>
 #include <stdio.h>
@@ -7,14 +8,12 @@
 #include <algorithm>
 #include <unordered_map>
 
-#define IDLE_TIMEOUT_S 5
-#define IDLE_TIMEOUT_ADDITIONAL_MS 0
-#define RECV_BUFFER_LENGTH 64
-#define SEND_BUFFER_LENGTH 64
+using namespace Config;
 
-// MAKE A VARIABLE LENGTH BUFFER (STRING) THAT IS FILLED UP WITH FULL HTTP REQS BY THE SMALL BUFFER.
-// GIVE IT A SIZE CAP
-// MAKE SURE THIS WHOLE PROCESS IF COMPLETE BEFORE PROCEEDING TO THE NEXT SOCKET IN THE READABLE SOCKETS LOOPS
+constexpr int COULD_NOT_FIND = -1;
+constexpr int STOI_ERROR = -2;
+constexpr int TOO_LARGE = -3;
+
 struct SOCKET_AND_PROPS {
     SOCKET sock;
     std::time_t lastuse_time;
@@ -87,20 +86,29 @@ public:
             }
 
             if(bytes == 0){ // i.e. TCP connection gracefully closed. Empty kernel buffer? Then you would get WSAEWOULDBLOCK
-                closesocket(sock); conn_map.erase(sock);
-                std::cout << "Closed socket: " << sock << std::endl;
-                continue;
+                closesocket(sock); conn_map.erase(sock); continue;
             }
 
-            // Haven't continued yet - there is data in the buffer to be dealt with
+            // Haven't 'continue'd yet - there is data in the buffer to be dealt with
             conn_map[sock].req_accumulator.append(recvbuf, bytes);
-            std::cout << conn_map[sock].req_accumulator;
+            //std::cout << conn_map[sock].req_accumulator;
 
             set_socket_lastuse(sock);
 
+            int _header_end = header_end(conn_map[sock].req_accumulator);
+            if(_header_end == COULD_NOT_FIND){ continue; }
+            else if(_header_end == TOO_LARGE){ closesocket(sock); conn_map.erase(sock); continue; }
+            if(contains_TE(conn_map[sock].req_accumulator, _header_end)){ closesocket(sock); conn_map.erase(sock); continue; }
+
+            int _body_length = body_length(conn_map[sock].req_accumulator, _header_end);
+            if(_body_length == TOO_LARGE){ closesocket(sock); conn_map.erase(sock); continue; }
+            if(_body_length == STOI_ERROR){ closesocket(sock); conn_map.erase(sock); continue; }
+            if(_body_length == COULD_NOT_FIND){ _body_length = 0; }
+
+            // Accumulate until the accumulator has the complete request (headers + _body_length bytes of body). Then parse.
+            // If a user undersends, idle timeout will close the socket eventually (yet to implement)
+
             // Finding the request ending:
-            // Reject TE chunked requests. The body begins after Content-Length: X. If this header doesnt exist, then the request
-            // ends at "\r\n\r\n".
             // Q: What if the CL is honest but simply too large?
             // A: Hardcap on the header and body size.
             // Q: What if a user injects an early CL: 1000000?
@@ -108,6 +116,12 @@ public:
             // Otherwise, take in 1000000 bytes as a request. This might cut into other requests on the socket, and the request
             // will be messed up. This will be caught by the full parser, which will be called after the request is fully collected.
             // The full parser will detect framing violations and close the socket immediately.
+            // Q: What if the request contains "\r\n\r\n" before it contains CL?
+            // A: Call the header ending finder first, then on success, call the CL finder (body length finder) and search before
+            // the index of "\r\n\r\n". It won't find anything, and the request will end there.
+            // Q: What about multiple requests in one buffer?
+            // A: One you know the bounds of the request and you have it all appended to the string, parse it then cut it off the front
+            // of the string, bringing the next request to the front. Keep appending the buffer to the string.
 
             // How to put this in code:
             // 
@@ -129,7 +143,36 @@ private:
         conn_map[sock].lastuse_time = current_time;
     }
 
+    int header_end(std::string accumulator){
+        if(accumulator.length() > REQ_HEADER_LENGTH_CAP){ return TOO_LARGE; }
+        auto header_end_index = accumulator.find("\r\n\r\n");
+        if(header_end_index == std::string::npos){ return COULD_NOT_FIND; }
+        return header_end_index;
+    }
 
+    bool contains_TE(std::string accumulator, int header_end_index){
+        if(header_end_index == std::string::npos){ return false; }
+        auto TE_index = accumulator.find("Transfer-Encoding");
+        if(TE_index != std::string::npos){ return true; }
+        return false;
+    }
+
+    int body_length(std::string accumulator, int header_end_index){
+        if(header_end_index == std::string::npos){ return COULD_NOT_FIND; }
+        auto CL_index = accumulator.rfind("Content-Length", header_end_index);
+        if(CL_index == std::string::npos){ return COULD_NOT_FIND; }
+
+        auto CL_end_index = accumulator.find("\r\n", CL_index);
+        if(CL_end_index == std::string::npos){ return COULD_NOT_FIND; }
+
+        try{
+            int bytes = std::stoi(accumulator.substr(CL_index + 16, CL_end_index)); // stoi may throw an errors
+            if(bytes > REQ_BODY_LENGTH_CAP){ return TOO_LARGE; }
+            return bytes;
+        } catch(...){
+            return STOI_ERROR;
+        }
+    }
 
     // Contains all current open TCP connections (sockets), and certain properties of them
     std::unordered_map<SOCKET, SOCKET_AND_PROPS> conn_map;
