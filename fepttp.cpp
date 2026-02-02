@@ -86,24 +86,30 @@ public:
             }
 
             if(bytes == 0){ // i.e. TCP connection gracefully closed. Empty kernel buffer? Then you would get WSAEWOULDBLOCK
+                std::cout << "Socket gracefully closed: " << sock << std::endl;
                 closesocket(sock); conn_map.erase(sock); continue;
             }
 
             // Haven't 'continue'd yet - there is data in the buffer to be dealt with
             conn_map[sock].req_accumulator.append(recvbuf, bytes);
-            //std::cout << conn_map[sock].req_accumulator;
-
             set_socket_lastuse(sock);
+            //std::cout << conn_map[sock].req_accumulator;
 
             int _header_end = header_end(conn_map[sock].req_accumulator);
             if(_header_end == COULD_NOT_FIND){ continue; }
-            else if(_header_end == TOO_LARGE){ closesocket(sock); conn_map.erase(sock); continue; }
+            if(_header_end == TOO_LARGE){ closesocket(sock); conn_map.erase(sock); continue; }
             if(contains_TE(conn_map[sock].req_accumulator, _header_end)){ closesocket(sock); conn_map.erase(sock); continue; }
 
             int _body_length = body_length(conn_map[sock].req_accumulator, _header_end);
             if(_body_length == TOO_LARGE){ closesocket(sock); conn_map.erase(sock); continue; }
             if(_body_length == STOI_ERROR){ closesocket(sock); conn_map.erase(sock); continue; }
             if(_body_length == COULD_NOT_FIND){ _body_length = 0; }
+
+            int _request_length = _header_end + 4 + _body_length;
+            if(conn_map[sock].req_accumulator.length() < _request_length){ continue; }
+
+            std::cout << conn_map[sock].req_accumulator.substr(0, _request_length) << std::endl; // Eventually - parse
+            conn_map[sock].req_accumulator.erase(0, _request_length);
 
             // Accumulate until the accumulator has the complete request (headers + _body_length bytes of body). Then parse.
             // If a user undersends, idle timeout will close the socket eventually (yet to implement)
