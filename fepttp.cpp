@@ -1,7 +1,7 @@
-#include <iostream>
+#include "config.h"
+#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <windows.h>
 #include <mswsock.h>
 #include <stdio.h>
 #include <string>
@@ -9,8 +9,22 @@
 #include <chrono>
 #include <algorithm>
 #include <unordered_map>
+#include <iostream>
+
+using namespace Config;
 
 #pragma comment(lib, "ws2_32.lib")
+
+struct SOCKET_INFO {
+    SOCKET sock;
+};
+
+struct AcceptContext{
+    SOCKET accept_sock = INVALID_SOCKET;
+    char addr_buffer[(sizeof(sockaddr_in) + 16) * 2];
+    OVERLAPPED ov{};
+    DWORD bytes_received;
+};
 
 class Fepttp{
 public:
@@ -22,14 +36,62 @@ public:
 
     }
 
-    int run(){
-    while(true){
+    void run(){
+    SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = sysinfo.dwNumberOfProcessors;
+    for(int i = 0; i < worker_count; i++){
+        CreateThread(NULL, 0, worker_function, (LPVOID)IOCP, 0, nullptr);
+    }
 
+    // There will always be this many AcceptExs waiting
+    for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); printf("dsuga"); }
+
+    // If run() finishes, the program exits in main(), so keep it alive, and doing something useful
+    while(true){
+        Sleep(1000);
     }
     }
 
 private:
     WSADATA wsa_data;
+    SOCKET lsocket;
+    HANDLE IOCP;
+    int worker_count;
+
+    std::unordered_map<SOCKET, SOCKET_INFO> cmap;
+
+    void post_acceptex(){
+        // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
+        // ADD THE ACCEPT SOCKET TO CMAP ONLY AFTER COMPLETION
+        AcceptContext * ctx = new AcceptContext();
+        ctx->accept_sock = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
+        BOOL success = AcceptEx(
+            lsocket,                      // The listening socket
+            ctx->accept_sock,             // The socket to accept the connection on
+            ctx->addr_buffer,             // Where to store the remote and local addresses
+            0,                            // Number of bytes of TCP stream data to initially receive
+            sizeof(sockaddr_in) + 16,     // Number of bytes for the local address
+            sizeof(sockaddr_in) + 16,     // Number of bytes for the remote address
+            &ctx->bytes_received,         // AcceptEx will set this to the number of bytes received
+            &ctx->ov                      // AcceptEx will send the completion packet here
+        );
+
+        if(!success){
+            auto err = WSAGetLastError();
+            if(err != ERROR_IO_PENDING){
+                std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->accept_sock); delete ctx;
+            } else{ std::cout << "AcceptEx is not finished yet" << std::endl; }
+        }
+    }
+ 
+    // The event loop for each worker thread, which takes the IOCP as a parameter
+    static DWORD WINAPI worker_function(LPVOID param){
+    HANDLE iocp = (HANDLE)param;
+    while(true){
+        // Event loop
+    }
+
+    return 0;
+    }
 
     int start_server(int PORT){
         std::cout << "Starting server on port " << PORT << std::endl;
@@ -40,7 +102,7 @@ private:
         }
 
         // Create the listening socket
-        SOCKET lsocket = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
+        lsocket = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
         if(lsocket == SOCKET_ERROR){
             std::cout << "Failed to create listening socket. Error" << WSAGetLastError() << std::endl; WSACleanup(); return 1;
         }
@@ -59,6 +121,18 @@ private:
 
         if(listen(lsocket, SOMAXCONN) == SOCKET_ERROR){
             std::cout << "Listen failed. Error: " << WSAGetLastError() << std::endl; WSACleanup(); return 1;
+        }
+
+        // Create the IOCP. Second parameter is an existing IOCP. If this is not nullptr, then this function associates the handle
+        // in the first parameter to the specified IOCP. We do this below with the listening socket. Parameter 3 is a completion
+        // key. Parameter 4 is the number of worker threads. 0 sets it to default
+        IOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
+        if(!IOCP){
+            std::cout << "Error creating IOCP. Error: " << WSAGetLastError() <<  std::endl; WSACleanup(); return 1;
+        }
+
+        if(!CreateIoCompletionPort((HANDLE)lsocket, IOCP, 0, 0)){
+            std::cout << "Error associating lsocket to IOCP. Error: " << WSAGetLastError() << std::endl; WSACleanup(); return 1;
         }
 
         return 0;
