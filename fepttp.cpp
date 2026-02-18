@@ -39,6 +39,9 @@ public:
     }
 
     void run(){
+        // TESTING PURPOSES ONLY. ACCEPTEX POSTS SHOULD BE AFTER THREAD SPAWNING
+        //for(int i = 0; i < 2 * CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); } Sleep(6000);
+
         // Set the number of worker threads to 2X the number of logical processors on the computer. Create the threads
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
@@ -89,7 +92,12 @@ private:
     static DWORD WINAPI worker_function(LPVOID param){
     HANDLE iocp = (HANDLE)param;
     while(true){
-        
+        OVERLAPPED_ENTRY entries[GQCSEX_MAX_INTAKE];
+        ULONG num_removed;
+
+        GetQueuedCompletionStatusEx(iocp, entries, GQCSEX_MAX_INTAKE, &num_removed, INFINITE, FALSE);
+
+        std::cout << num_removed << std::endl;
     }
 
     return 0;
@@ -142,8 +150,6 @@ private:
 };
 
 int main(){
-    std::cout << ERROR_IO_PENDING;
-    
     Fepttp server = Fepttp(8000);
     server.run();
 
