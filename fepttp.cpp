@@ -17,15 +17,21 @@ using namespace Config;
 #pragma comment(lib, "mswsock.lib")
 #pragma comment(lib, "kernel32.lib")
 
+enum OpType { Accept, Recv, Send };
+
 struct SOCKET_INFO {
     SOCKET sock;
 };
 
-struct AcceptContext{
-    SOCKET accept_sock = INVALID_SOCKET;
-    char addr_buffer[(sizeof(sockaddr_in) + 16) * 2];
+// SPLIT THIS INTO MULTIPLE LATER (ACCEPT, RECV, SEND)
+struct IOContext{
+    int optype;
+    SOCKET sock = INVALID_SOCKET;
     OVERLAPPED ov{};
-    DWORD bytes_received;
+    char addr_buffer[(sizeof(sockaddr_in) + 16) * 2];
+    WSABUF wsabuf;
+    char recvbuf[RECV_BUFFER_SIZE];
+    char sendbuf[SEND_BUFFER_SIZE];
 };
 
 class Fepttp{
@@ -67,23 +73,24 @@ private:
     void post_acceptex(){ // No parameters since AcceptEx requests are only posted to the listening socket
         // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
         // ADD THE ACCEPT SOCKET TO CMAP ONLY AFTER COMPLETION
-        AcceptContext * ctx = new AcceptContext();
-        ctx->accept_sock = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
+        IOContext * ctx = new IOContext();
+        ctx->optype = OpType::Accept;
+        ctx->sock = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
         BOOL success = AcceptEx(
             lsocket,                      // The listening socket
-            ctx->accept_sock,             // The socket to accept the connection on
+            ctx->sock,                    // The socket to accept the connection on
             ctx->addr_buffer,             // Where to store the remote and local addresses
             0,                            // Number of bytes of TCP stream data to initially receive
             sizeof(sockaddr_in) + 16,     // Number of bytes for the local address
             sizeof(sockaddr_in) + 16,     // Number of bytes for the remote address
-            &ctx->bytes_received,         // AcceptEx will set this to the number of bytes received
+            nullptr,                     // AcceptEx will set this to the number of bytes received (can find in OVERLAPPED)
             &ctx->ov                      // AcceptEx will send the completion packet here
         );
 
         if(!success){
             auto err = WSAGetLastError();
             if(err != ERROR_IO_PENDING){
-                std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->accept_sock); delete ctx;
+                std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->sock); delete ctx;
             }
         }
     }
@@ -96,8 +103,18 @@ private:
         ULONG num_removed;
 
         GetQueuedCompletionStatusEx(iocp, entries, GQCSEX_MAX_INTAKE, &num_removed, INFINITE, FALSE);
-
+          
         std::cout << num_removed << std::endl;
+
+        for(int i = 0; i < num_removed; i++){
+            OVERLAPPED * ovptr = entries[i].lpOverlapped;
+            IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
+            switch(ctx->optype){
+            case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
+            case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
+            case OpType::Send: // --------------------------------- Send operation --------------------------------------------
+            }
+        }
     }
 
     return 0;

@@ -8,4 +8,6 @@ namespace Config {
                                                 // of incoming connections instantly
     constexpr int GQCSEX_MAX_INTAKE = 256;      // A cap on the number of completion packets that GetQueuedCompletionStatusEx can
                                                 // take in at once.
+    constexpr int RECV_BUFFER_SIZE = 64;        // The size (in bytes) of the WSARecv buffer
+    constexpr int SEND_BUFFER_SIZE = 64;        // Similarly for the WSASend buffer 
 }
