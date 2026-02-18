@@ -111,8 +111,11 @@ private:
             IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
             switch(ctx->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
+            break;
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
+            break;
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
+            break;
             }
         }
     }
