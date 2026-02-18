@@ -1,6 +1,6 @@
 #include "config.h"
-#include <windows.h>
 #include <winsock2.h>
+#include <windows.h>
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <stdio.h>
@@ -14,6 +14,8 @@
 using namespace Config;
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "mswsock.lib")
+#pragma comment(lib, "kernel32.lib")
 
 struct SOCKET_INFO {
     SOCKET sock;
@@ -37,18 +39,18 @@ public:
     }
 
     void run(){
-    SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = sysinfo.dwNumberOfProcessors;
-    for(int i = 0; i < worker_count; i++){
-        CreateThread(NULL, 0, worker_function, (LPVOID)IOCP, 0, nullptr);
-    }
+        // Set the number of worker threads to 2X the number of logical processors on the computer. Create the threads
+        SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
+        for(int i = 0; i < worker_count; i++){
+            CreateThread(NULL, 0, worker_function, (LPVOID)IOCP, 0, nullptr);
+        }
 
-    // There will always be this many AcceptExs waiting
-    for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); printf("dsuga"); }
+        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); }
 
-    // If run() finishes, the program exits in main(), so keep it alive, and doing something useful
-    while(true){
-        Sleep(1000);
-    }
+        // If run() finishes, the program exits in main(), so keep it alive, and doing something useful
+        while(true){
+            Sleep(1000);
+        }
     }
 
 private:
@@ -59,7 +61,7 @@ private:
 
     std::unordered_map<SOCKET, SOCKET_INFO> cmap;
 
-    void post_acceptex(){
+    void post_acceptex(){ // No parameters since AcceptEx requests are only posted to the listening socket
         // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
         // ADD THE ACCEPT SOCKET TO CMAP ONLY AFTER COMPLETION
         AcceptContext * ctx = new AcceptContext();
@@ -79,7 +81,7 @@ private:
             auto err = WSAGetLastError();
             if(err != ERROR_IO_PENDING){
                 std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->accept_sock); delete ctx;
-            } else{ std::cout << "AcceptEx is not finished yet" << std::endl; }
+            }
         }
     }
  
@@ -87,7 +89,7 @@ private:
     static DWORD WINAPI worker_function(LPVOID param){
     HANDLE iocp = (HANDLE)param;
     while(true){
-        // Event loop
+        
     }
 
     return 0;
@@ -140,6 +142,8 @@ private:
 };
 
 int main(){
+    std::cout << ERROR_IO_PENDING;
+    
     Fepttp server = Fepttp(8000);
     server.run();
 
