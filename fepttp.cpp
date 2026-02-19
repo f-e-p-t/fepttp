@@ -21,12 +21,14 @@ enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
     SOCKET sock;
+    std::time_t lastuse;
+    std::string acc;
 };
 
 // SPLIT THIS INTO MULTIPLE LATER (ACCEPT, RECV, SEND)
 struct IOContext{
     int optype;
-    SOCKET sock = INVALID_SOCKET;
+    SOCKET sock = INVALID_SOCKET; // Replaces completion key
     OVERLAPPED ov{};
     char addr_buffer[(sizeof(sockaddr_in) + 16) * 2];
     WSABUF wsabuf;
@@ -46,7 +48,7 @@ public:
 
     void run(){
         // TESTING PURPOSES ONLY. ACCEPTEX POSTS SHOULD BE AFTER THREAD SPAWNING
-        //for(int i = 0; i < 2 * CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); } Sleep(6000);
+        //for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); } Sleep(6000);
 
         // Set the number of worker threads to 2X the number of logical processors on the computer. Create the threads
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
@@ -54,7 +56,7 @@ public:
             CreateThread(NULL, 0, worker_function, (LPVOID)IOCP, 0, nullptr);
         }
 
-        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_acceptex(); }
+        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); }
 
         // If run() finishes, the program exits in main(), so keep it alive, and doing something useful
         while(true){
@@ -68,9 +70,7 @@ private:
     HANDLE IOCP;
     int worker_count;
 
-    std::unordered_map<SOCKET, SOCKET_INFO> cmap;
-
-    void post_acceptex(){ // No parameters since AcceptEx requests are only posted to the listening socket
+    void post_AcceptEx(){ // No parameters since AcceptEx requests are only posted to the listening socket
         // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
         // ADD THE ACCEPT SOCKET TO CMAP ONLY AFTER COMPLETION
         IOContext * ctx = new IOContext();
@@ -95,15 +95,15 @@ private:
         }
     }
  
-    // The event loop for each worker thread, which takes the IOCP as a parameter
-    static DWORD WINAPI worker_function(LPVOID param){
-    HANDLE iocp = (HANDLE)param;
+    // The event loop for each worker thread, which takes the IOCP as a parameter. Needs to be static to give a plain function ptr
+    static DWORD WINAPI worker_function(LPVOID iocpptr){
+    HANDLE iocp = (HANDLE)iocpptr;
     while(true){
         OVERLAPPED_ENTRY entries[GQCSEX_MAX_INTAKE];
         ULONG num_removed;
 
         GetQueuedCompletionStatusEx(iocp, entries, GQCSEX_MAX_INTAKE, &num_removed, INFINITE, FALSE);
-          
+
         std::cout << num_removed << std::endl;
 
         for(int i = 0; i < num_removed; i++){
@@ -111,6 +111,24 @@ private:
             IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
             switch(ctx->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
+
+            if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
+                std::cout << "Error associating socket " << ctx->sock << " to iocp." << std::endl;
+                break;
+            }
+            
+            std::cout << "Socket " << ctx->sock << " connected and associated to iocp" << std::endl;
+
+            // create socket object (cmap replacement), delete the ctx object when done with it, etc
+            // maybe post an initial batch of WSARecv and WSASend as with AcceptEx
+
+            // Hashmap leads to race conditions, so will need an object per open connection. Two threads can simultaneously read and
+            // write on this socket, so race conditions are still a problem. Solutions include using a mutex or an atomic flag.
+            // shouldnt be a problem while just accepting the connection, but will be for reads and writes.
+            // Q: If a thread gets a completion packet from the IOCP and tries to edit the per-connection object but gets blocked by
+            // a mutex, will the work never get done?
+            // A: No, the thread pauses at the line that requires the mutex until it can get the mutex, then it proceeds.
+
             break;
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             break;
