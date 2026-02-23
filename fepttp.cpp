@@ -1,4 +1,5 @@
 #include "config.h"
+#include "utilities.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <algorithm>
 #include <unordered_map>
+#include <mutex>
 #include <iostream>
 
 using namespace Config;
@@ -24,6 +26,23 @@ struct SOCKET_INFO {
     std::time_t lastuse;
     std::string acc;
 };
+
+struct CmapShard {
+    std::mutex mtx;
+    std::unordered_map<SOCKET, SOCKET_INFO> shard;
+};
+
+class ShardedCmap{
+private:
+    int get_shard(SOCKET sock){
+        return hashint(sock, CMAP_NUM_SHARDS);
+    }
+
+    std::vector<CmapShard> shards{CMAP_NUM_SHARDS};
+
+public:
+
+}; ShardedCmap scmap = ShardedCmap();
 
 // SPLIT THIS INTO MULTIPLE LATER (ACCEPT, RECV, SEND)
 struct IOContext{
@@ -114,7 +133,8 @@ private:
 
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to iocp." << std::endl;
-                break;
+                delete ctx;
+                continue;
             }
             
             std::cout << "Socket " << ctx->sock << " connected and associated to iocp" << std::endl;
@@ -128,6 +148,9 @@ private:
             // Q: If a thread gets a completion packet from the IOCP and tries to edit the per-connection object but gets blocked by
             // a mutex, will the work never get done?
             // A: No, the thread pauses at the line that requires the mutex until it can get the mutex, then it proceeds.
+            // Q: This object is defined on the heap, and the pointer goes out of scope after each iteration of the worker thread,
+            // so how are you going to find it?
+            // A: sharded hashmap
 
             break;
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
