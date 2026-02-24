@@ -34,13 +34,17 @@ struct CmapShard {
 
 class ShardedCmap{
 private:
-    int get_shard(SOCKET sock){
+    int get_shard_index(SOCKET sock){
         return hashint(sock, CMAP_NUM_SHARDS);
     }
 
     std::vector<CmapShard> shards{CMAP_NUM_SHARDS};
 
 public:
+    CmapShard * get_shard(SOCKET sock){
+        const int sh = get_shard_index(sock);
+        return &shards[sh];
+    }
 
 }; ShardedCmap scmap = ShardedCmap();
 
@@ -102,7 +106,7 @@ private:
             0,                            // Number of bytes of TCP stream data to initially receive
             sizeof(sockaddr_in) + 16,     // Number of bytes for the local address
             sizeof(sockaddr_in) + 16,     // Number of bytes for the remote address
-            nullptr,                     // AcceptEx will set this to the number of bytes received (can find in OVERLAPPED)
+            nullptr,                      // AcceptEx will set this to the number of bytes received (can find in OVERLAPPED)
             &ctx->ov                      // AcceptEx will send the completion packet here
         );
 
@@ -121,23 +125,30 @@ private:
         OVERLAPPED_ENTRY entries[GQCSEX_MAX_INTAKE];
         ULONG num_removed;
 
-        GetQueuedCompletionStatusEx(iocp, entries, GQCSEX_MAX_INTAKE, &num_removed, INFINITE, FALSE);
-
-        std::cout << num_removed << std::endl;
+        if(!GetQueuedCompletionStatusEx(iocp, entries, GQCSEX_MAX_INTAKE, &num_removed, INFINITE, FALSE)){
+            const auto err = WSAGetLastError();
+            std::cout << "GQCSEx error: " << err << std::endl;
+            if(err == ERROR_ABANDONED_WAIT_0){ break; /* IOCP gone. All threads will shut down */ }
+            continue;
+        }
 
         for(int i = 0; i < num_removed; i++){
+            
             OVERLAPPED * ovptr = entries[i].lpOverlapped;
             IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
             switch(ctx->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
-
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
-                std::cout << "Error associating socket " << ctx->sock << " to iocp." << std::endl;
+                std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
                 delete ctx;
                 continue;
             }
-            
-            std::cout << "Socket " << ctx->sock << " connected and associated to iocp" << std::endl;
+
+            std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
+
+            // Create a new SOCKET_INFO object and add it to scmap
+
+            delete ctx;
 
             // create socket object (cmap replacement), delete the ctx object when done with it, etc
             // maybe post an initial batch of WSARecv and WSASend as with AcceptEx
