@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <iostream>
+#include <thread>
 
 using namespace Config;
 
@@ -74,7 +75,7 @@ public:
         // Set the number of worker threads to 2X the number of logical processors on the computer. Create the threads
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
-            CreateThread(NULL, 0, worker_function, (LPVOID)IOCP, 0, nullptr);
+            workers.emplace_back([this]() { this->worker_function((LPVOID)IOCP); });
         }
 
         for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); }
@@ -90,6 +91,7 @@ private:
     SOCKET lsocket;
     HANDLE IOCP;
     int worker_count;
+    std::vector<std::thread> workers;
 
     void post_AcceptEx(){ // No parameters since AcceptEx requests are only posted to the listening socket
         // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
@@ -115,9 +117,9 @@ private:
             }
         }
     }
- 
+
     // The event loop for each worker thread, which takes the IOCP as a parameter. Needs to be static to give a plain function ptr
-    static DWORD WINAPI worker_function(LPVOID iocpptr){
+    DWORD WINAPI worker_function(LPVOID iocpptr){
     HANDLE iocp = (HANDLE)iocpptr;
     while(true){
         OVERLAPPED_ENTRY entries[GQCSEX_MAX_INTAKE];
@@ -129,9 +131,8 @@ private:
             if(err == ERROR_ABANDONED_WAIT_0){ break; /* IOCP gone. All threads will shut down */ }
             continue;
         }
-
+        std::cout << num_removed << std::endl;
         for(int i = 0; i < num_removed; i++){
-            
             OVERLAPPED * ovptr = entries[i].lpOverlapped;
             IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
             switch(ctx->optype){
@@ -139,29 +140,29 @@ private:
             {
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
-                delete ctx;
-                continue;
+                delete ctx; continue;
             }
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
-            // Create a new SOCKET_INFO object and add it to scmap
             {
                 CmapShard * sh = scmap.get_shard(ctx->sock);
                 std::scoped_lock lock(sh->mtx);
                 sh->shard.insert({ctx->sock, {""}});
             }
 
-            delete ctx;
+            post_AcceptEx();             // NEXT: Post a single WSARecv and WSASend to the new socket. Maintain them
 
-            // maybe post an initial batch of WSARecv and WSASend as with AcceptEx
+            delete ctx;
 
             break;
             }
+
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
             break;
             }
+
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
             {
             break;
