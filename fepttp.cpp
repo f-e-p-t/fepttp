@@ -22,9 +22,7 @@ using namespace Config;
 enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
-    SOCKET sock;
-    std::time_t lastuse;
-    std::string acc;
+    std::string reqacc;
 };
 
 struct CmapShard {
@@ -138,6 +136,7 @@ private:
             IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
             switch(ctx->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
+            {
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
                 delete ctx;
@@ -147,27 +146,26 @@ private:
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
             // Create a new SOCKET_INFO object and add it to scmap
+            {
+                CmapShard * sh = scmap.get_shard(ctx->sock);
+                std::scoped_lock lock(sh->mtx);
+                sh->shard.insert({ctx->sock, {""}});
+            }
 
             delete ctx;
 
-            // create socket object (cmap replacement), delete the ctx object when done with it, etc
             // maybe post an initial batch of WSARecv and WSASend as with AcceptEx
 
-            // Hashmap leads to race conditions, so will need an object per open connection. Two threads can simultaneously read and
-            // write on this socket, so race conditions are still a problem. Solutions include using a mutex or an atomic flag.
-            // shouldnt be a problem while just accepting the connection, but will be for reads and writes.
-            // Q: If a thread gets a completion packet from the IOCP and tries to edit the per-connection object but gets blocked by
-            // a mutex, will the work never get done?
-            // A: No, the thread pauses at the line that requires the mutex until it can get the mutex, then it proceeds.
-            // Q: This object is defined on the heap, and the pointer goes out of scope after each iteration of the worker thread,
-            // so how are you going to find it?
-            // A: sharded hashmap
-
             break;
+            }
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
+            {
             break;
+            }
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
+            {
             break;
+            }
             }
         }
     }
