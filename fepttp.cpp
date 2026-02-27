@@ -1,5 +1,6 @@
 #include "config.h"
 #include "utilities.h"
+#include "definitions.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -11,10 +12,12 @@
 #include <algorithm>
 #include <unordered_map>
 #include <mutex>
-#include <iostream>
 #include <thread>
+#include <atomic>
+#include <iostream>
 
 using namespace Config;
+using namespace Definitions;
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "mswsock.lib")
@@ -47,15 +50,23 @@ public:
 
 }; ShardedCmap scmap = ShardedCmap();
 
-// SPLIT THIS INTO MULTIPLE LATER (ACCEPT, RECV, SEND)
-struct IOContext{
+struct IOContextPtr{
     int optype;
-    SOCKET sock = INVALID_SOCKET; // Replaces completion key
     OVERLAPPED ov{};
-    char addr_buffer[(sizeof(sockaddr_in) + 16) * 2];
-    WSABUF wsabuf;
-    char recvbuf[RECV_BUFFER_SIZE];
-    char sendbuf[SEND_BUFFER_SIZE];
+    void * ptr;
+};
+
+struct AcceptContext{
+    SOCKET sock = INVALID_SOCKET;
+    char addr_buf[(sizeof(sockaddr_in) + 16) * 2];
+};
+
+struct RecvContext{
+    // To be done
+};
+
+struct SendContext{
+    // Not in use yet
 };
 
 class Fepttp{
@@ -72,17 +83,19 @@ public:
         // TESTING PURPOSES ONLY. ACCEPTEX POSTS SHOULD BE AFTER THREAD SPAWNING
         //for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); } Sleep(6000);
 
-        // Set the number of worker threads to 2X the number of logical processors on the computer. Create the threads
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
             workers.emplace_back([this]() { this->worker_function((LPVOID)IOCP); });
         }
 
-        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); }
+        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); posted_acceptexs++; }
 
-        // If run() finishes, the program exits in main(), so keep it alive, and doing something useful
+        // Housekeeping loop
         while(true){
-            Sleep(1000);
+            Sleep(50);
+            if(posted_acceptexs < CONCURRENT_ACCEPTEXS){
+                if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
+            }
         }
     }
 
@@ -91,31 +104,40 @@ private:
     SOCKET lsocket;
     HANDLE IOCP;
     int worker_count;
+    std::atomic<int> posted_acceptexs = 0;
+
     std::vector<std::thread> workers;
 
-    void post_AcceptEx(){ // No parameters since AcceptEx requests are only posted to the listening socket
-        // This is a heap variable, so it won't go out of scope. IT WILL NEED TO BE DELETED MANUALLY IN THE WORKER THREAD
-        // ADD THE ACCEPT SOCKET TO CMAP ONLY AFTER COMPLETION
-        IOContext * ctx = new IOContext();
-        ctx->optype = OpType::Accept;
+    int post_AcceptEx(){
+        AcceptContext * ctx = new AcceptContext(); // delete this one as soon as you consume the pointer to the real ctx object
+        IOContextPtr * ctxptr = new IOContextPtr();
+        ctxptr->ptr = (void *)ctx;
+        ctxptr->optype = OpType::Accept;
         ctx->sock = WSASocket(AF_INET, SOCK_STREAM, 0, nullptr, 0, WSA_FLAG_OVERLAPPED);
         BOOL success = AcceptEx(
             lsocket,                      // The listening socket
             ctx->sock,                    // The socket to accept the connection on
-            ctx->addr_buffer,             // Where to store the remote and local addresses
+            ctx->addr_buf,                // Where to store the remote and local addresses
             0,                            // Number of bytes of TCP stream data to initially receive
             sizeof(sockaddr_in) + 16,     // Number of bytes for the local address
             sizeof(sockaddr_in) + 16,     // Number of bytes for the remote address
             nullptr,                      // AcceptEx will set this to the number of bytes received (can find in OVERLAPPED)
-            &ctx->ov                      // AcceptEx will send the completion packet here
+            &ctxptr->ov                   // AcceptEx will send the completion packet here
         );
 
-        if(!success){
+        if(success == FALSE){
             auto err = WSAGetLastError();
             if(err != ERROR_IO_PENDING){
                 std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->sock); delete ctx;
+                return IO_POST_FAILURE;
             }
         }
+
+        return IO_POST_SUCCESS;
+    }
+
+    void post_WSARecv(SOCKET sock){
+        //
     }
 
     // The event loop for each worker thread, which takes the IOCP as a parameter. Needs to be static to give a plain function ptr
@@ -134,10 +156,14 @@ private:
         std::cout << num_removed << std::endl;
         for(int i = 0; i < num_removed; i++){
             OVERLAPPED * ovptr = entries[i].lpOverlapped;
-            IOContext * ctx = CONTAINING_RECORD(ovptr, IOContext, ov);
-            switch(ctx->optype){
+            IOContextPtr * ctxptr = CONTAINING_RECORD(ovptr, IOContextPtr, ov);
+            switch(ctxptr->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
             {
+            posted_acceptexs--;
+
+            AcceptContext * ctx = (AcceptContext *)ctxptr->ptr;
+
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
                 delete ctx; continue;
@@ -151,7 +177,11 @@ private:
                 sh->shard.insert({ctx->sock, {""}});
             }
 
-            post_AcceptEx();             // NEXT: Post a single WSARecv and WSASend to the new socket. Maintain them
+            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
+
+            std::cout << posted_acceptexs << std::endl;
+
+            // NEXT: Post a single WSARecv and WSASend to the new socket. Maintain them
 
             delete ctx;
 
