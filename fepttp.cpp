@@ -48,7 +48,7 @@ public:
         return &shards[sh];
     }
 
-}; ShardedCmap scmap = ShardedCmap();
+};
 
 struct IOContextPtr{
     int optype;
@@ -112,6 +112,8 @@ private:
     HANDLE IOCP;
     int worker_count;
     std::atomic<int> posted_acceptexs = 0;
+
+    ShardedCmap scmap;
 
     std::vector<std::thread> workers;
 
