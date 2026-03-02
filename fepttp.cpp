@@ -62,7 +62,14 @@ struct AcceptContext{
 };
 
 struct RecvContext{
-    // To be done
+    WSABUF bufs[1];
+    char recvbuf[RECV_BUFFER_SIZE];
+    DWORD bytes;
+
+    RecvContext(){
+        bufs[0].buf = recvbuf;
+        bufs[0].len = sizeof(recvbuf);
+    }
 };
 
 struct SendContext{
@@ -109,7 +116,7 @@ private:
     std::vector<std::thread> workers;
 
     int post_AcceptEx(){
-        AcceptContext * ctx = new AcceptContext(); // delete this one as soon as you consume the pointer to the real ctx object
+        AcceptContext * ctx = new AcceptContext();
         IOContextPtr * ctxptr = new IOContextPtr();
         ctxptr->ptr = (void *)ctx;
         ctxptr->optype = OpType::Accept;
@@ -128,7 +135,8 @@ private:
         if(success == FALSE){
             auto err = WSAGetLastError();
             if(err != ERROR_IO_PENDING){
-                std::cout << "Error with AcceptEx. Error: " << err << std::endl; closesocket(ctx->sock); delete ctx;
+                std::cout << "Error with AcceptEx. Error: " << err << std::endl; 
+                closesocket(ctx->sock); delete ctx; delete ctxptr;
                 return IO_POST_FAILURE;
             }
         }
@@ -136,8 +144,32 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    void post_WSARecv(SOCKET sock){
-        //
+    // TEST THIS AND IMPLEMENT IT
+    int post_WSARecv(SOCKET sock){
+        RecvContext * ctx = new RecvContext();
+        IOContextPtr * ctxptr = new IOContextPtr();
+        ctxptr->ptr = (void *)ctx;
+        ctxptr->optype = OpType::Recv;
+        int success = WSARecv(
+            sock,                        // The socket to receive from
+            ctx->bufs,                   // The array of receive buffers
+            1,                           // The number of buffers
+            &ctx->bytes,                 // Number of bytes received from the socket
+            nullptr,                     // A pointer to flags that can modify the behaviour of WSARecv
+            &ctxptr->ov,                 // WSARecv will send the completion packet here
+            NULL                         // Completion routine
+        );
+
+        if(success == SOCKET_ERROR){
+            auto err = WSAGetLastError();
+            if(err != ERROR_IO_PENDING){
+                std::cout << "Error with WSARecv. Error: " << err << std::endl;
+                closesocket(sock); delete ctx; delete ctxptr;
+                return IO_POST_FAILURE;
+            }
+        }
+
+        return IO_POST_SUCCESS;
     }
 
     // The event loop for each worker thread, which takes the IOCP as a parameter. Needs to be static to give a plain function ptr
@@ -198,6 +230,8 @@ private:
             break;
             }
             }
+
+            delete ctxptr;
         }
     }
 
