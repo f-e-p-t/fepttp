@@ -6,11 +6,13 @@ namespace Config {
                                                 // posting this many when the run() method is called, and then replenishing an AcceptEx
                                                 // request whenever one is dealt with in the worker threads. Reasoning: deal with batches
                                                 // of incoming connections instantly
+    
+    constexpr int CONCURRENT_WSARECVS = 10;     // As above but with WSARecv. Larger buffer --> less. Smaller buffer --> more.
 
     constexpr int GQCSEX_MAX_INTAKE = 256;      // A cap on the number of completion packets that GetQueuedCompletionStatusEx can
-                                                // take in at once.
+                                                // take in at once
 
-    constexpr int RECV_BUFFER_SIZE = 64;        // The size (in bytes) of the WSARecv buffer
+    constexpr int RECV_BUFFER_SIZE = 512;       // The size (in bytes) of the WSARecv buffer
 
     constexpr int SEND_BUFFER_SIZE = 64;        // Similarly for the WSASend buffer
 

@@ -47,7 +47,6 @@ public:
         const int sh = get_shard_index(sock);
         return &shards[sh];
     }
-
 };
 
 struct IOContextPtr{
@@ -62,9 +61,9 @@ struct AcceptContext{
 };
 
 struct RecvContext{
+    SOCKET sock;
     WSABUF bufs[1];
     char recvbuf[RECV_BUFFER_SIZE];
-    DWORD bytes;
 
     RecvContext(){
         bufs[0].buf = recvbuf;
@@ -111,7 +110,9 @@ private:
     SOCKET lsocket;
     HANDLE IOCP;
     int worker_count;
+    DWORD flags = 0;
     std::atomic<int> posted_acceptexs = 0;
+    std::atomic<int> posted_wsarecvs = 0;
 
     ShardedCmap scmap;
 
@@ -146,18 +147,19 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    // TEST THIS AND IMPLEMENT IT
     int post_WSARecv(SOCKET sock){
         RecvContext * ctx = new RecvContext();
         IOContextPtr * ctxptr = new IOContextPtr();
         ctxptr->ptr = (void *)ctx;
         ctxptr->optype = OpType::Recv;
+        ctx->sock = sock;
+        flags = 0;
         int success = WSARecv(
             sock,                        // The socket to receive from
             ctx->bufs,                   // The array of receive buffers
             1,                           // The number of buffers
-            &ctx->bytes,                 // Number of bytes received from the socket
-            nullptr,                     // A pointer to flags that can modify the behaviour of WSARecv
+            NULL,                        // Number of bytes received from the socket
+            &flags,                      // A pointer to flags that can modify the behaviour of WSARecv
             &ctxptr->ov,                 // WSARecv will send the completion packet here
             NULL                         // Completion routine
         );
@@ -187,16 +189,18 @@ private:
             if(err == ERROR_ABANDONED_WAIT_0){ break; /* IOCP gone. All threads will shut down */ }
             continue;
         }
-        std::cout << num_removed << std::endl;
+        //std::cout << num_removed << std::endl;
         for(int i = 0; i < num_removed; i++){
             OVERLAPPED * ovptr = entries[i].lpOverlapped;
             IOContextPtr * ctxptr = CONTAINING_RECORD(ovptr, IOContextPtr, ov);
+
             switch(ctxptr->optype){
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
             {
             posted_acceptexs--;
+            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
 
-            AcceptContext * ctx = (AcceptContext *)ctxptr->ptr;
+            AcceptContext * ctx = (AcceptContext *)ctxptr->ptr; delete ctxptr;
 
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
@@ -205,17 +209,17 @@ private:
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
-            {
+            {   // Put socket info into scmap.
                 CmapShard * sh = scmap.get_shard(ctx->sock);
                 std::scoped_lock lock(sh->mtx);
                 sh->shard.insert({ctx->sock, {""}});
             }
 
-            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
+            // NEXT: Post WSARecvs and WSASends to the new socket. Maintain them
 
-            std::cout << posted_acceptexs << std::endl;
-
-            // NEXT: Post a single WSARecv and WSASend to the new socket. Maintain them
+            for(int i = 0; i < CONCURRENT_WSARECVS; i++){
+                if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; };
+            }
 
             delete ctx;
 
@@ -224,6 +228,12 @@ private:
 
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
+            RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
+                
+            // HANDLE MISSING WSARECV CALLS HERE, LIKE THE WORKER THREAD DOES. WILL NEED TO POST AS MANY AS ARE MISSING.
+            
+            delete ctx;
+
             break;
             }
 
@@ -232,8 +242,6 @@ private:
             break;
             }
             }
-
-            delete ctxptr;
         }
     }
 
