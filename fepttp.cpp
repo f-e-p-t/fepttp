@@ -98,8 +98,8 @@ public:
 
         // Housekeeping loop
         while(true){
-            Sleep(50);
-            if(posted_acceptexs < CONCURRENT_ACCEPTEXS){
+            Sleep(100);
+            for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){
                 if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
             }
         }
@@ -198,9 +198,10 @@ private:
             case OpType::Accept: // ------------------------------ Accept operation -------------------------------------------
             {
             posted_acceptexs--;
-            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
 
             AcceptContext * ctx = (AcceptContext *)ctxptr->ptr; delete ctxptr;
+
+            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
 
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
@@ -215,9 +216,7 @@ private:
                 sh->shard.insert({ctx->sock, {""}});
             }
 
-            // NEXT: Post WSARecvs and WSASends to the new socket. Maintain them
-
-            for(int i = 0; i < CONCURRENT_WSARECVS; i++){
+            for(int j = 0; j < CONCURRENT_WSARECVS; j++){ // Post the initial WSARecvs
                 if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; };
             }
 
@@ -228,9 +227,16 @@ private:
 
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
+            posted_wsarecvs--;
+            auto bytes = entries[i].dwNumberOfBytesTransferred;
+
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
-                
-            // HANDLE MISSING WSARECV CALLS HERE, LIKE THE WORKER THREAD DOES. WILL NEED TO POST AS MANY AS ARE MISSING.
+
+            for(int j = posted_wsarecvs; j < CONCURRENT_WSARECVS; j++){
+                if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; }
+            }
+
+            closesocket(ctx->sock);
             
             delete ctx;
 
