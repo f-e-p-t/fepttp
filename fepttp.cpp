@@ -232,11 +232,34 @@ private:
 
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
 
-            for(int j = posted_wsarecvs; j < CONCURRENT_WSARECVS; j++){
+            if(bytes == 0){
+                if(closesocket(ctx->sock) == SOCKET_ERROR){ // Ensure the full shutdown logic runs only once
+                    delete ctx;
+                    auto err = WSAGetLastError();
+                    if(err != WSAENOTSOCK){ std::cout << "Unexpected error with closesocket. Error: " << err << std::endl; }
+                    continue;
+                }
+                {
+                    CmapShard * sh = scmap.get_shard(ctx->sock);
+                    std::scoped_lock lock(sh->mtx);
+                    sh->shard.erase(ctx->sock);
+                }
+                std::cout << "Socket gracefully closed: " << ctx->sock << std::endl;
+                delete ctx;
+                continue;
+            }
+
+            for(int j = posted_wsarecvs; j < CONCURRENT_WSARECVS; j++){ // FORGET THIS - ONLY ONE AT A TIME
                 if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; }
             }
 
-            closesocket(ctx->sock);
+            {
+                CmapShard * sh = scmap.get_shard(ctx->sock);
+                std::scoped_lock lock(sh->mtx);
+                sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
+                std::cout << bytes << std::endl;
+                std::cout << sh->shard[ctx->sock].reqacc << std::endl;
+            }
             
             delete ctx;
 
