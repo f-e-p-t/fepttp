@@ -99,7 +99,7 @@ public:
 
         // Housekeeping loop
         while(true){
-            Sleep(100);
+            Sleep(10);
             for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){ // Maintain the posted AcceptExs
                 if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
             }
@@ -232,7 +232,7 @@ private:
 
             // POST THE INITIAL WSARECV AND MAINTAIN IT BELOW
             SetTimeout::Timeout t([ctx]() {
-                std::cout << "Callback executed. Socket passed: " << ctx->sock << std::endl;
+                std::cout << "It's been 5s. Socket passed: " << ctx->sock << std::endl;
             }, 5000);
             timeouts.push_back(t);
 
