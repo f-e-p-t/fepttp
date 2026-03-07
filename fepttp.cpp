@@ -231,10 +231,10 @@ private:
             }
 
             // POST THE INITIAL WSARECV AND MAINTAIN IT BELOW
-            Timeout::Timer t([ctx]() {
+            SetTimeout::Timeout t([ctx]() {
                 std::cout << "Callback executed. Socket passed: " << ctx->sock << std::endl;
             }, 5000);
-            timers.push_back(t);
+            timeouts.push_back(t);
 
             delete ctx;
 
