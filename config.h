@@ -14,7 +14,10 @@ namespace Config {
 
     constexpr int SEND_BUFFER_SIZE = 64;        // Similarly for the WSASend buffer
 
-    constexpr int CMAP_NUM_SHARDS = 16;         // The number of shards in the sharded connections map. Set to 1? A single shard,
+    constexpr int CMAP_NUM_SHARDS = 256;        // The number of shards in the sharded connections map. Set to 1? A single shard,
                                                 // hence a single mutex that every worker thread fights over. Set too high? Too many
                                                 // mutexes, so too much memory wasted. THIS MUST BE A POWER OF 2
+
+    constexpr int IO_RETRY_DELAY_MS = 2000;     // If posting an IO operation (for example, WSARecv) fails, the server will wait
+                                                // this many milliseconds before retrying the operation
 }

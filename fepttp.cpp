@@ -28,6 +28,7 @@ enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
     std::string reqacc;
+    bool wsarecv_posted = false;
 };
 
 struct CmapShard {
@@ -108,7 +109,22 @@ public:
             auto now = std::chrono::steady_clock::now();
             for(auto& t : timeouts){ // Deal with the completed timeouts
                 if(now >= t.expiry){
+                switch(t.callbacktype){
+                case SetTimeout::CallbackType::Generic: // ---------- Generic callback ----------
+                {
                     t.execute_callback();
+                    break;
+                }
+
+                case SetTimeout::CallbackType::PostWSARecv: // ---------- WSARecv post callback ----------
+                {
+                    t.execute_callback();
+                    // IF IT FAILS, SET THE TIMEOUT AGAIN
+                    break;
+                }
+
+                default: { break; }
+                }
                 }
             }
             timeouts.erase( // Erase the completed timeouts
@@ -224,17 +240,24 @@ private:
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
-            {   // Put socket info into scmap
-                CmapShard * sh = scmap.get_shard(ctx->sock);
-                std::scoped_lock lock(sh->mtx);
-                sh->shard.insert({ctx->sock, {""}});
-            }
+            {   // <<<--------------->>>
+            CmapShard * sh = scmap.get_shard(ctx->sock);
+            std::scoped_lock lock(sh->mtx);
+            sh->shard.insert({ctx->sock, {""}});
+            }   // <<<--------------->>>
 
-            // POST THE INITIAL WSARECV AND MAINTAIN IT BELOW
-            SetTimeout::Timeout t([ctx]() {
-                std::cout << "It's been 5s. Socket passed: " << ctx->sock << std::endl;
-            }, 5000);
-            timeouts.push_back(t);
+            // Post an initial WSARecv. Set a timeout to try again later if it fails
+            if(post_WSARecv(ctx->sock) == IO_POST_FAILURE){
+                // SET THE PER-SOCKET wsarecv_posted TO FALSE BECUASE THE POST FAILED
+                const SOCKET s = ctx->sock;
+                SetTimeout::Timeout t([s]() {
+                    // POST WSARecv TO THE SOCKET s
+                },
+                    SetTimeout::CallbackType::PostWSARecv,
+                    IO_RETRY_DELAY_MS
+                );
+                timeouts.push_back(t);
+            }
 
             delete ctx;
 
@@ -271,7 +294,7 @@ private:
                 std::scoped_lock lock(sh->mtx);
                 sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
                 std::cout << bytes << std::endl;
-                std::cout << sh->shard[ctx->sock].reqacc << std::endl;
+                //std::cout << sh->shard[ctx->sock].reqacc << std::endl;
             }
             
             delete ctx;
