@@ -1,6 +1,7 @@
 #include "config.h"
 #include "utilities.h"
 #include "definitions.h"
+#include "timeout.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -37,7 +38,7 @@ struct CmapShard {
 class ShardedCmap{
 private:
     int get_shard_index(SOCKET sock){
-        return hashint(sock, CMAP_NUM_SHARDS);
+        return Utils::hashint(sock, CMAP_NUM_SHARDS);
     }
 
     std::vector<CmapShard> shards{CMAP_NUM_SHARDS};
@@ -99,9 +100,21 @@ public:
         // Housekeeping loop
         while(true){
             Sleep(100);
-            for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){
+            for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){ // Maintain the posted AcceptExs
                 if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
             }
+
+            // There is a log(n) way to do this, but this is for later. Temporarily we loop over all the timers
+            auto now = std::chrono::steady_clock::now();
+            for(auto& t : timeouts){ // Deal with the completed timeouts
+                if(now >= t.expiry){
+                    bool success = t.execute_callback(); // CREATE A FUNCTION THAT DEALS WITH DIFFERENT CALLBACKS DIFFERENTLY
+                }
+            }
+            timeouts.erase( // Erase the completed timeouts
+                std::remove_if(timeouts.begin(), timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
+                timeouts.end()
+            );
         }
     }
 
@@ -112,9 +125,10 @@ private:
     int worker_count;
     DWORD flags = 0;
     std::atomic<int> posted_acceptexs = 0;
-    std::atomic<int> posted_wsarecvs = 0;
 
     ShardedCmap scmap;
+
+    std::vector<SetTimeout::Timeout> timeouts;
 
     std::vector<std::thread> workers;
 
@@ -210,15 +224,17 @@ private:
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
-            {   // Put socket info into scmap.
+            {   // Put socket info into scmap
                 CmapShard * sh = scmap.get_shard(ctx->sock);
                 std::scoped_lock lock(sh->mtx);
                 sh->shard.insert({ctx->sock, {""}});
             }
 
-            for(int j = 0; j < CONCURRENT_WSARECVS; j++){ // Post the initial WSARecvs
-                if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; };
-            }
+            // POST THE INITIAL WSARECV AND MAINTAIN IT BELOW
+            Timeout::Timer t([ctx]() {
+                std::cout << "Callback executed. Socket passed: " << ctx->sock << std::endl;
+            }, 5000);
+            timers.push_back(t);
 
             delete ctx;
 
@@ -227,12 +243,13 @@ private:
 
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
-            posted_wsarecvs--;
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
 
-            if(bytes == 0){
+            // REPOST THE SINGLE WSARECV
+
+            if(bytes == 0){ // CHANGE THIS TO ADJUST FOR A SINGLE WSARECV POST
                 if(closesocket(ctx->sock) == SOCKET_ERROR){ // Ensure the full shutdown logic runs only once
                     delete ctx;
                     auto err = WSAGetLastError();
@@ -247,10 +264,6 @@ private:
                 std::cout << "Socket gracefully closed: " << ctx->sock << std::endl;
                 delete ctx;
                 continue;
-            }
-
-            for(int j = posted_wsarecvs; j < CONCURRENT_WSARECVS; j++){ // FORGET THIS - ONLY ONE AT A TIME
-                if(post_WSARecv(ctx->sock) == IO_POST_SUCCESS){ posted_wsarecvs++; }
             }
 
             {
