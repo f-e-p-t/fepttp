@@ -7,9 +7,8 @@
 namespace SetTimeout {
     class Timeout {
     public:
-        bool execute_callback(){
+        void execute_callback(){
             callbackfn();
-            return true;
         }
 
         std::chrono::steady_clock::time_point expiry;

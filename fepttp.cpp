@@ -108,7 +108,7 @@ public:
             auto now = std::chrono::steady_clock::now();
             for(auto& t : timeouts){ // Deal with the completed timeouts
                 if(now >= t.expiry){
-                    bool success = t.execute_callback(); // CREATE A FUNCTION THAT DEALS WITH DIFFERENT CALLBACKS DIFFERENTLY
+                    t.execute_callback();
                 }
             }
             timeouts.erase( // Erase the completed timeouts
