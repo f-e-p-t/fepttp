@@ -80,7 +80,7 @@ struct SendContext{
 class Fepttp{
 public:
     Fepttp(int PORT){
-        start_server(PORT);
+        StartServer(PORT);
     }
 
     ~Fepttp(){
@@ -89,45 +89,49 @@ public:
 
     void run(){
         // TESTING PURPOSES ONLY. ACCEPTEX POSTS SHOULD BE AFTER THREAD SPAWNING
-        //for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); } Sleep(6000);
+        //for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ PostAcceptEx(); } Sleep(6000);
 
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
-            workers.emplace_back([this]() { this->worker_function((LPVOID)IOCP); });
+            workers.emplace_back([this]() { this->WorkerFunction((LPVOID)IOCP); });
         }
 
-        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ post_AcceptEx(); posted_acceptexs++; }
+        for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ PostAcceptEx(); posted_acceptexs++; }
 
         // Housekeeping loop
         while(true){
             Sleep(10);
-            for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){ // Maintain the posted AcceptExs
-                if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
+            // Maintain the AcceptExs
+            for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){
+                if(PostAcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
             }
 
-            // There is a log(n) way to do this, but this is for later. Temporarily we loop over all the timers
+            // Handle timeouts
             auto now = std::chrono::steady_clock::now();
-            for(auto& t : timeouts){ // Deal with the completed timeouts
+            for(auto& t : timeouts){
                 if(now >= t.expiry){
                 switch(t.callbacktype){
                 case SetTimeout::CallbackType::Generic: // ---------- Generic callback ----------
                 {
-                    t.execute_callback();
-                    break;
+                t.ExecuteCallback();
+                break;
                 }
 
                 case SetTimeout::CallbackType::PostWSARecv: // ---------- WSARecv post callback ----------
                 {
-                    t.execute_callback();
-                    // IF IT FAILS, SET THE TIMEOUT AGAIN
-                    break;
+                t.ExecuteCallback();
+                CmapShard * sh = scmap.get_shard(t.sock);
+                if(!sh->shard[t.sock].wsarecv_posted){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
+                break;
                 }
 
-                default: { break; }
+                default: { break; } // --------------------
                 }
                 }
             }
-            timeouts.erase( // Erase the completed timeouts
+
+            // Erase the completed timeouts
+            timeouts.erase(
                 std::remove_if(timeouts.begin(), timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
                 timeouts.end()
             );
@@ -148,7 +152,12 @@ private:
 
     std::vector<std::thread> workers;
 
-    int post_AcceptEx(){
+    void RepeatTimeout(SetTimeout::Timeout t, int ms){
+        SetTimeout::Timeout tt = SetTimeout::RecreateTimeout(t, ms);
+        timeouts.push_back(tt);
+    }
+
+    int PostAcceptEx(){
         AcceptContext * ctx = new AcceptContext();
         IOContextPtr * ctxptr = new IOContextPtr();
         ctxptr->ptr = (void *)ctx;
@@ -177,7 +186,7 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    int post_WSARecv(SOCKET sock){
+    int PostWSARecv(SOCKET sock){
         RecvContext * ctx = new RecvContext();
         IOContextPtr * ctxptr = new IOContextPtr();
         ctxptr->ptr = (void *)ctx;
@@ -206,8 +215,29 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    // The event loop for each worker thread, which takes the IOCP as a parameter. Needs to be static to give a plain function ptr
-    DWORD WINAPI worker_function(LPVOID iocpptr){
+    void ScheduleRetryPostWSARecv(SOCKET sock){
+        // This is called if PostWSARecv fails, so set the per-socket wsarecv_posted flag to false
+        {   // <<<--------------->>>
+        CmapShard * sh = scmap.get_shard(sock); std::scoped_lock lock(sh->mtx);
+        sh->shard[sock].wsarecv_posted = false;
+        }   // <<<--------------->>>
+
+        // Create a timeout to retry the WSARecv post which sets the flag to true if succesful
+        SetTimeout::Timeout t([sock, this](){
+            if(PostWSARecv(sock) == IO_POST_SUCCESS){
+                {   // <<<--------------->>>
+                CmapShard * sh = scmap.get_shard(sock); std::scoped_lock lock(sh->mtx);
+                sh->shard[sock].wsarecv_posted = true;
+                }   // <<<--------------->>>
+            };
+
+        }, SetTimeout::CallbackType::PostWSARecv, IO_RETRY_DELAY_MS, sock);
+
+        // Set the timeout
+        timeouts.push_back(t);
+    }
+
+    DWORD WINAPI WorkerFunction(LPVOID iocpptr){
     HANDLE iocp = (HANDLE)iocpptr;
     while(true){
         OVERLAPPED_ENTRY entries[GQCSEX_MAX_INTAKE];
@@ -231,7 +261,7 @@ private:
 
             AcceptContext * ctx = (AcceptContext *)ctxptr->ptr; delete ctxptr;
 
-            if(post_AcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
+            if(PostAcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
 
             if(!CreateIoCompletionPort((HANDLE)ctx->sock, iocp, 0, 0)){
                 std::cout << "Error associating socket " << ctx->sock << " to IOCP. Error: " << WSAGetLastError() << std::endl;
@@ -241,43 +271,35 @@ private:
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
             {   // <<<--------------->>>
-            CmapShard * sh = scmap.get_shard(ctx->sock);
-            std::scoped_lock lock(sh->mtx);
+            CmapShard * sh = scmap.get_shard(ctx->sock); std::scoped_lock lock(sh->mtx);
             sh->shard.insert({ctx->sock, {""}});
             }   // <<<--------------->>>
 
-            // Post an initial WSARecv. Set a timeout to try again later if it fails
-            if(post_WSARecv(ctx->sock) == IO_POST_FAILURE){
-                // SET THE PER-SOCKET wsarecv_posted TO FALSE BECUASE THE POST FAILED
-                const SOCKET s = ctx->sock;
-                SetTimeout::Timeout t([s]() {
-                    // POST WSARecv TO THE SOCKET s
-                },
-                    SetTimeout::CallbackType::PostWSARecv,
-                    IO_RETRY_DELAY_MS
-                );
-                timeouts.push_back(t);
-            }
+            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             delete ctx;
-
             break;
             }
 
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
+            RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
-            RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
+            {   // <<<--------------->>>
+            CmapShard * sh = scmap.get_shard(ctx->sock);
+            std::scoped_lock lock(sh->mtx);
+            sh->shard[ctx->sock].wsarecv_posted = false;
+            }   // <<<--------------->>>
 
-            // REPOST THE SINGLE WSARECV
-
-            if(bytes == 0){ // CHANGE THIS TO ADJUST FOR A SINGLE WSARECV POST
-                if(closesocket(ctx->sock) == SOCKET_ERROR){ // Ensure the full shutdown logic runs only once
-                    delete ctx;
+            if(bytes == 0){
+                const auto result = closesocket(ctx->sock);
+                if(result == SOCKET_ERROR){
                     auto err = WSAGetLastError();
-                    if(err != WSAENOTSOCK){ std::cout << "Unexpected error with closesocket. Error: " << err << std::endl; }
-                    continue;
+                    if(err != WSAENOTSOCK){
+                        std::cout << "Error closing socket " << ctx->sock << std::endl;
+                        delete ctx; continue;
+                    }
                 }
                 {
                     CmapShard * sh = scmap.get_shard(ctx->sock);
@@ -285,20 +307,19 @@ private:
                     sh->shard.erase(ctx->sock);
                 }
                 std::cout << "Socket gracefully closed: " << ctx->sock << std::endl;
-                delete ctx;
-                continue;
+                delete ctx; continue;
             }
+
+            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             {
                 CmapShard * sh = scmap.get_shard(ctx->sock);
                 std::scoped_lock lock(sh->mtx);
                 sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
-                std::cout << bytes << std::endl;
-                //std::cout << sh->shard[ctx->sock].reqacc << std::endl;
+                std::cout << sh->shard[ctx->sock].reqacc << std::endl;
             }
             
             delete ctx;
-
             break;
             }
 
@@ -313,7 +334,7 @@ private:
     return 0;
     }
 
-    int start_server(int PORT){
+    int StartServer(int PORT){
         std::cout << "Starting server on port " << PORT << std::endl;
 
         // Initialise WSA
