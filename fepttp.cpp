@@ -32,7 +32,7 @@ struct SOCKET_INFO {
     bool wsarecv_no_retry = false;
 };
 
-struct CmapShard {
+struct CmapShard{
     std::mutex mtx;
     std::unordered_map<SOCKET, SOCKET_INFO> shard;
 };
@@ -52,6 +52,10 @@ public:
     }
 };
 
+struct TimeoutList{
+    std::mutex mtx;
+    std::vector<SetTimeout::Timeout> timeouts;
+};
 struct IOContextPtr{
     int optype;
     OVERLAPPED ov{};
@@ -106,18 +110,15 @@ public:
 
             // Handle timeouts
             auto now = std::chrono::steady_clock::now();
-            for(auto& t : timeouts){
+            for(auto& t : tl.timeouts){
                 if(now >= t.expiry){
+                t.ExecuteCallback();
                 switch(t.callbacktype){
                 case SetTimeout::CallbackType::Generic: // ---------- Generic callback ----------
-                {
-                t.ExecuteCallback();
-                break;
-                }
+                { break; }
 
                 case SetTimeout::CallbackType::PostWSARecv: // ---------- WSARecv post callback ----------
                 {
-                t.ExecuteCallback();
                 CmapShard * sh = scmap.GetShard(t.sock);
                 if(!sh->shard[t.sock].wsarecv_no_retry){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
                 break;
@@ -129,9 +130,9 @@ public:
             }
 
             // Erase the completed timeouts
-            timeouts.erase(
-                std::remove_if(timeouts.begin(), timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
-                timeouts.end()
+            tl.timeouts.erase(
+                std::remove_if(tl.timeouts.begin(), tl.timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
+                tl.timeouts.end()
             );
         }
     }
@@ -146,13 +147,13 @@ private:
 
     ShardedCmap scmap;
 
-    std::vector<SetTimeout::Timeout> timeouts;
+    TimeoutList tl;
 
     std::vector<std::thread> workers;
 
     void RepeatTimeout(SetTimeout::Timeout t, int ms){
         SetTimeout::Timeout tt = SetTimeout::RecreateTimeout(t, ms);
-        timeouts.push_back(tt);
+        { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(tt); }
     }
 
     int PostAcceptEx(){
@@ -226,7 +227,7 @@ private:
         }, SetTimeout::CallbackType::PostWSARecv, IO_RETRY_DELAY_MS, sock);
 
         // Set the timeout
-        timeouts.push_back(t);
+        { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
     }
 
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
@@ -317,8 +318,8 @@ private:
             // By this point, the thread has the full raw request. It is erased next, so do something with it
 
             {   // <<<--------------->>>
-                std::scoped_lock lock(sh->mtx);
-                sh->shard[ctx->sock].reqacc.erase(0, req_length);
+            std::scoped_lock lock(sh->mtx);
+            sh->shard[ctx->sock].reqacc.erase(0, req_length);
             }   // <<<--------------->>>
 
             delete ctx;
