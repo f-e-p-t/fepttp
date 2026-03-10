@@ -130,10 +130,13 @@ public:
             }
 
             // Erase the completed timeouts
+            {
+            std::scoped_lock lock(tl.mtx);
             tl.timeouts.erase(
                 std::remove_if(tl.timeouts.begin(), tl.timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
                 tl.timeouts.end()
             );
+            }
         }
     }
 
