@@ -2,6 +2,7 @@
 #include "utilities.h"
 #include "definitions.h"
 #include "timeout.h"
+#include "httpparsing.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -28,7 +29,7 @@ enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
     std::string reqacc;
-    bool wsarecv_posted = false;
+    bool wsarecv_no_retry = false;
 };
 
 struct CmapShard {
@@ -38,15 +39,15 @@ struct CmapShard {
 
 class ShardedCmap{
 private:
-    int get_shard_index(SOCKET sock){
+    int GetShardIndex(SOCKET sock){
         return Utils::hashint(sock, CMAP_NUM_SHARDS);
     }
 
     std::vector<CmapShard> shards{CMAP_NUM_SHARDS};
 
 public:
-    CmapShard * get_shard(SOCKET sock){
-        const int sh = get_shard_index(sock);
+    CmapShard * GetShard(SOCKET sock){
+        const int sh = GetShardIndex(sock);
         return &shards[sh];
     }
 };
@@ -88,9 +89,6 @@ public:
     }
 
     void run(){
-        // TESTING PURPOSES ONLY. ACCEPTEX POSTS SHOULD BE AFTER THREAD SPAWNING
-        //for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ PostAcceptEx(); } Sleep(6000);
-
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
             workers.emplace_back([this]() { this->WorkerFunction((LPVOID)IOCP); });
@@ -120,8 +118,8 @@ public:
                 case SetTimeout::CallbackType::PostWSARecv: // ---------- WSARecv post callback ----------
                 {
                 t.ExecuteCallback();
-                CmapShard * sh = scmap.get_shard(t.sock);
-                if(!sh->shard[t.sock].wsarecv_posted){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
+                CmapShard * sh = scmap.GetShard(t.sock);
+                if(!sh->shard[t.sock].wsarecv_no_retry){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
                 break;
                 }
 
@@ -216,18 +214,12 @@ private:
     }
 
     void ScheduleRetryPostWSARecv(SOCKET sock){
-        // This is called if PostWSARecv fails, so set the per-socket wsarecv_posted flag to false
-        {   // <<<--------------->>>
-        CmapShard * sh = scmap.get_shard(sock); std::scoped_lock lock(sh->mtx);
-        sh->shard[sock].wsarecv_posted = false;
-        }   // <<<--------------->>>
-
         // Create a timeout to retry the WSARecv post which sets the flag to true if succesful
         SetTimeout::Timeout t([sock, this](){
             if(PostWSARecv(sock) == IO_POST_SUCCESS){
                 {   // <<<--------------->>>
-                CmapShard * sh = scmap.get_shard(sock); std::scoped_lock lock(sh->mtx);
-                sh->shard[sock].wsarecv_posted = true;
+                CmapShard * sh = scmap.GetShard(sock); std::scoped_lock lock(sh->mtx);
+                sh->shard[sock].wsarecv_no_retry = true;
                 }   // <<<--------------->>>
             };
 
@@ -260,6 +252,7 @@ private:
             posted_acceptexs--;
 
             AcceptContext * ctx = (AcceptContext *)ctxptr->ptr; delete ctxptr;
+            CmapShard * sh = scmap.GetShard(ctx->sock);
 
             if(PostAcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
 
@@ -271,7 +264,7 @@ private:
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
             {   // <<<--------------->>>
-            CmapShard * sh = scmap.get_shard(ctx->sock); std::scoped_lock lock(sh->mtx);
+            std::scoped_lock lock(sh->mtx);
             sh->shard.insert({ctx->sock, {""}});
             }   // <<<--------------->>>
 
@@ -284,12 +277,12 @@ private:
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
+            CmapShard * sh = scmap.GetShard(ctx->sock); 
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
             {   // <<<--------------->>>
-            CmapShard * sh = scmap.get_shard(ctx->sock);
             std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].wsarecv_posted = false;
+            sh->shard[ctx->sock].wsarecv_no_retry = false;
             }   // <<<--------------->>>
 
             if(bytes == 0){
@@ -302,7 +295,6 @@ private:
                     }
                 }
                 {
-                    CmapShard * sh = scmap.get_shard(ctx->sock);
                     std::scoped_lock lock(sh->mtx);
                     sh->shard.erase(ctx->sock);
                 }
@@ -312,13 +304,23 @@ private:
 
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
-            {
-                CmapShard * sh = scmap.get_shard(ctx->sock);
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh->mtx);
+            sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
+            }   // <<<--------------->>>
+
+            int req_length = parser.RequestLength(sh->shard[ctx->sock].reqacc);
+            if(req_length == CONTINUE){ delete ctx; continue; }
+            if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
+
+            std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
+            // By this point, the thread has the full raw request. It is erased next, so do something with it
+
+            {   // <<<--------------->>>
                 std::scoped_lock lock(sh->mtx);
-                sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
-                std::cout << sh->shard[ctx->sock].reqacc << std::endl;
-            }
-            
+                sh->shard[ctx->sock].reqacc.erase(0, req_length);
+            }   // <<<--------------->>>
+
             delete ctx;
             break;
             }

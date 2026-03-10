@@ -20,4 +20,8 @@ namespace Config {
 
     constexpr int IO_RETRY_DELAY_MS = 2000;     // If posting an IO operation (for example, WSARecv) fails, the server will wait
                                                 // this many milliseconds before retrying the operation
+
+    constexpr int REQ_HEADER_CAP = 16384;       // Reject incoming requests if their headers exceed this length
+
+    constexpr int REQ_BODY_CAP = 16384;         // Same for request bodies
 }
