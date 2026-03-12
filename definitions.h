@@ -9,4 +9,5 @@ namespace Definitions {
     constexpr int THREW_ERROR = -3;
     constexpr int CONTINUE = -4;
     constexpr int CLOSE_ERASE_CONTINUE = -5;
+    constexpr int REQUEST_MALFORMED = 1;
 }

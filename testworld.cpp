@@ -1,18 +1,16 @@
 #include <iostream>
 #include <mutex>
-
-class Dsuga {
-    std::mutex mtx;
-};
+#include <string>
+#include <string_view>
+#include <charconv>
 
 int main(){
-    int x = 1;
+    std::string_view str = "342";
 
-    switch(x){
-        case 0: break;
-        case 1: std::cout << "bruh" << std::endl; break;
-        case 2: break;
-    }
+    int strint;
+    auto result = std::from_chars(str.data(), str.data() + str.size(), strint);
+
+    std::cout << 2 * strint << std::endl;
 
     return 0;
 }

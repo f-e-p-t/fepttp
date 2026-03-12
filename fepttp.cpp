@@ -149,7 +149,7 @@ private:
     std::atomic<int> posted_acceptexs = 0;
 
     ShardedCmap scmap;
-
+    
     TimeoutList tl;
 
     std::vector<std::thread> workers;
@@ -318,12 +318,16 @@ private:
             if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 
             std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
-            // By this point, the thread has the full raw request. It is erased next, so do something with it
+            std::cout << sh->shard[ctx->sock].reqacc.length() << std::endl;
+            HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
+            if(req.error == REQUEST_MALFORMED){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
             sh->shard[ctx->sock].reqacc.erase(0, req_length);
             }   // <<<--------------->>>
+
+            std::cout << req.body << std::endl;
 
             delete ctx;
             break;
