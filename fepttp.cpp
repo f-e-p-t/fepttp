@@ -56,6 +56,7 @@ struct TimeoutList{
     std::mutex mtx;
     std::vector<SetTimeout::Timeout> timeouts;
 };
+
 struct IOContextPtr{
     int optype;
     OVERLAPPED ov{};
@@ -79,7 +80,14 @@ struct RecvContext{
 };
 
 struct SendContext{
-    // Not in use yet
+    SOCKET sock;
+    WSABUF bufs[1];
+    char sendbuf[SEND_BUFFER_SIZE];
+
+    SendContext(){
+        bufs[0].buf = sendbuf;
+        bufs[0].len = sizeof(sendbuf);
+    }
 };
 
 class Fepttp{
@@ -233,6 +241,35 @@ private:
         { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
     }
 
+    int PostWSASend(SOCKET sock){
+        RecvContext * ctx = new RecvContext();
+        IOContextPtr * ctxptr = new IOContextPtr();
+        ctxptr->ptr = (void *)ctx;
+        ctxptr->optype = OpType::Send;
+        ctx->sock = sock;
+        flags = 0;
+        int success = WSASend(
+            sock,
+            ctx->bufs,
+            1,
+            NULL,
+            flags,
+            &ctxptr->ov,
+            NULL
+        );
+
+        if(success == SOCKET_ERROR){
+            auto err = WSAGetLastError();
+            if(err != ERROR_IO_PENDING){
+                std::cout << "Error with WSASend. Error: " << err << std::endl;
+                closesocket(sock); delete ctx; delete ctxptr;
+                return IO_POST_FAILURE;
+            }
+        }
+
+        return IO_POST_SUCCESS;
+    }
+
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
     HANDLE iocp = (HANDLE)iocpptr;
     while(true){
@@ -327,14 +364,18 @@ private:
             sh->shard[ctx->sock].reqacc.erase(0, req_length);
             }   // <<<--------------->>>
 
-            std::cout << req.body << std::endl;
-
             delete ctx;
             break;
             }
 
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
             {
+            SendContext * ctx = (SendContext *)ctxptr->ptr; delete ctxptr;
+            CmapShard * sh = scmap.GetShard(ctx->sock);
+            auto bytes = entries[i].dwNumberOfBytesTransferred;
+
+            std::cout << "Send operation completed on socket " << ctx->sock << std::endl;
+
             break;
             }
             }

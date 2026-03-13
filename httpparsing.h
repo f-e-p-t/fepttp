@@ -31,7 +31,11 @@ public:
     int error = 0;
 
     std::string GetHeader(std::string_view name){
-        //
+        for(const auto& h : headers){
+            if(name == h.name){ return h.value; }
+        }
+        
+        return "";
     }
 };
 
