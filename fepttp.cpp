@@ -3,6 +3,7 @@
 #include "definitions.h"
 #include "timeout.h"
 #include "httpparsing.h"
+#include "httpresponses.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -355,7 +356,6 @@ private:
             if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 
             std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
-            std::cout << sh->shard[ctx->sock].reqacc.length() << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
             if(req.error == REQUEST_MALFORMED){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 

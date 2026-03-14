@@ -1,6 +1,7 @@
 #pragma once
 #include "config.h"
 #include "definitions.h"
+#include <vector>
 #include <string>
 #include <string_view>
 #include <charconv>
@@ -18,17 +19,20 @@ struct Header {
 
 class HTTPRequest {
 private:
+    std::vector<Header> headers;
 
 public:
     std::string method;
     std::string target;
     std::string protocol;
 
-    std::vector<Header> headers;
-
     std::string body;
 
     int error = 0;
+
+    void AddHeader(Header h){
+        headers.push_back(h);
+    }
 
     std::string GetHeader(std::string_view name){
         for(const auto& h : headers){
@@ -142,7 +146,7 @@ public:
             mpos = colon + pos;
             if(mpos == std::string::npos){ req.error = REQUEST_MALFORMED; return req; }
             Header h = Header(acc.substr(pos, mpos - pos), acc.substr(mpos + 2, rpos - mpos - 2));
-            req.headers.push_back(h);
+            req.AddHeader(h);
             pos = rpos + 2;
         }
 

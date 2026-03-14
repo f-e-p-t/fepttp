@@ -7,7 +7,9 @@ namespace Definitions {
     constexpr int COULD_NOT_FIND = -1;
     constexpr int TOO_LARGE = -2;
     constexpr int THREW_ERROR = -3;
+
     constexpr int CONTINUE = -4;
     constexpr int CLOSE_ERASE_CONTINUE = -5;
+    
     constexpr int REQUEST_MALFORMED = 1;
 }
