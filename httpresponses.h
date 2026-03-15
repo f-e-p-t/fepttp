@@ -14,7 +14,7 @@ class HTTPResponse {
 private:
     std::vector<Header> headers;
 
-    static inline const std::unordered_map<int, std::string> status = {
+    static inline std::unordered_map<int, std::string> status = {
         {100, "Continue"}, {101, "Switching Protocols"}, {102, "Processing"}, {103, "Early Hints"}, {200, "OK"}, {201, "Created"},
         {202, "Accepted"}, {203, "Non-Authoritative Information"}, {204, "No Content"}, {205, "Reset Content"},
         {206, "Partial Content"}, {207, "Multi-Status"}, {208, "Already Reported"}, {226, "IM Used"}, {300, "Multiple Choices"},
@@ -31,16 +31,29 @@ private:
         {508, "Loop Detected"}, {510, "Not Extended"}, {511, "Network Authentication Required"}
     };
 
+    std::string FormattedDateAndTime(){
+        auto now = std::chrono::system_clock::now();
+        std::time_t _now = std::chrono::system_clock::to_time_t(now);
+        std::tm * gmt = std::gmtime(&_now);
+        char buf[32];
+        if(std::strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", gmt)){
+            return buf;
+        }
+        return "";
+    }
+
     std::string Assemble(){
         std::string res = "";
 
         // Assemble status line
-        res += ("HTTP/1.1 " + std::to_string(status_code) + " " + status.at(status_code) + "\r\n");
+        res += ("HTTP/1.1 " + std::to_string(status_code) + " " + status[status_code] + "\r\n");
 
         // Assemble response headers (controlled by server, not by user)
+        res += "Server: Fepttp\r\n";
+        res += ("Date: " + FormattedDateAndTime() + "\r\n");
+        res += ("Cache-Control: " + cache_control + "\r\n");
         
         // Assemble representation headers
-        // All user-controlled for now. Later add methods like expressJS's .json() that automate this
 
         // Assemble body
 
@@ -49,12 +62,23 @@ private:
     }
 
 public:
+    void SetHeader(std::string name, std::string value){
+        // 
+    }
+
+    void GetHeader(std::string name){
+        // This is application layer stuff
+    }
+
     void AddHeader(std::string name, std::string value){
         Header h = Header(name, value);
         headers.push_back(h);
     };
 
     int status_code;
+
+    // Default is "no-cache"
+    std::string cache_control = "no-cache";
 
     void Send(){
         // Send the request to the server (call some server method; let the server handle the sending)
