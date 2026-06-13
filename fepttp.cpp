@@ -341,27 +341,49 @@ private:
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].wsarecv_no_retry = false;
-            }   // <<<--------------->>>
-            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
-
-            {   // <<<--------------->>>
-            std::scoped_lock lock(sh->mtx);
             sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
             }   // <<<--------------->>>
 
             int req_length = parser.RequestLength(sh->shard[ctx->sock].reqacc);
-            if(req_length == CONTINUE){ delete ctx; continue; }
-            if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
+            if(req_length == CONTINUE){ // WSARecv is posted here
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh->mtx);
+                sh->shard[ctx->sock].wsarecv_no_retry = false;
+                }   // <<<--------------->>>
+                if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
+                delete ctx; continue;
+            }
+            if(req_length == CLOSE_ERASE_CONTINUE){
+                closesocket(ctx->sock);
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh->mtx);
+                sh->shard.erase(ctx->sock);
+                }   // <<<--------------->>>
+                delete ctx; continue;
+            }
 
-            std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
+            //std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
-            if(req.error == REQUEST_MALFORMED){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
+            std::cout << req.method << ", " << req.GetHeader("Host") << std::endl;
+            if(req.error == REQUEST_MALFORMED){ // Close, erase, continue
+                closesocket(ctx->sock);
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh->mtx);
+                sh->shard.erase(ctx->sock);
+                }   // <<<--------------->>>
+                delete ctx; continue;
+            }
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
             sh->shard[ctx->sock].reqacc.erase(0, req_length);
             }   // <<<--------------->>>
+
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh->mtx);
+            sh->shard[ctx->sock].wsarecv_no_retry = false;
+            }   // <<<--------------->>>
+            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             delete ctx;
             break;
