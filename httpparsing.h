@@ -81,7 +81,7 @@ public:
         int body_length = BodyLength(acc, header_end);
         if(body_length == TOO_LARGE){ return CLOSE_ERASE_CONTINUE; }
         if(body_length == THREW_ERROR){ return CLOSE_ERASE_CONTINUE; }
-        if(body_length == COULD_NOT_FIND){ return 0; }
+        if(body_length == COULD_NOT_FIND){ body_length = 0; }
 
         const int req_length = header_end + body_length + 4;
         if(acc.length() < req_length){ return CONTINUE; }

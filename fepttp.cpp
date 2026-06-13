@@ -319,13 +319,8 @@ private:
             case OpType::Recv: // --------------------------------- Recv operation --------------------------------------------
             {
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
-            CmapShard * sh = scmap.GetShard(ctx->sock); 
+            CmapShard * sh = scmap.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
-
-            {   // <<<--------------->>>
-            std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].wsarecv_no_retry = false;
-            }   // <<<--------------->>>
 
             if(bytes == 0){
                 const auto result = closesocket(ctx->sock);
@@ -336,14 +331,18 @@ private:
                         delete ctx; continue;
                     }
                 }
-                {
-                    std::scoped_lock lock(sh->mtx);
-                    sh->shard.erase(ctx->sock);
-                }
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh->mtx);
+                sh->shard.erase(ctx->sock);
+                }   // <<<--------------->>>
                 std::cout << "Socket gracefully closed: " << ctx->sock << std::endl;
                 delete ctx; continue;
             }
 
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh->mtx);
+            sh->shard[ctx->sock].wsarecv_no_retry = false;
+            }   // <<<--------------->>>
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             {   // <<<--------------->>>
@@ -353,11 +352,11 @@ private:
 
             int req_length = parser.RequestLength(sh->shard[ctx->sock].reqacc);
             if(req_length == CONTINUE){ delete ctx; continue; }
-            if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
+            if(req_length == CLOSE_ERASE_CONTINUE){ closesocket(ctx->sock); sh->shard.erase(ctx->sock); delete ctx; continue; }
 
             std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
-            if(req.error == REQUEST_MALFORMED){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
+            if(req.error == REQUEST_MALFORMED){ closesocket(ctx->sock); sh->shard.erase(ctx->sock); delete ctx; continue; }
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
@@ -376,6 +375,7 @@ private:
 
             std::cout << "Send operation completed on socket " << ctx->sock << std::endl;
 
+            delete ctx;
             break;
             }
             }
