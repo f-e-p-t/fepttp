@@ -139,13 +139,13 @@ public:
             }
 
             // Erase the completed timeouts
-            {
+            {   // <<<--------------->>>
             std::scoped_lock lock(tl.mtx);
             tl.timeouts.erase(
                 std::remove_if(tl.timeouts.begin(), tl.timeouts.end(), [now](const SetTimeout::Timeout& t) { return (now >= t.expiry); }),
                 tl.timeouts.end()
             );
-            }
+            }   // <<<--------------->>>
         }
     }
 
@@ -352,11 +352,11 @@ private:
 
             int req_length = parser.RequestLength(sh->shard[ctx->sock].reqacc);
             if(req_length == CONTINUE){ delete ctx; continue; }
-            if(req_length == CLOSE_ERASE_CONTINUE){ closesocket(ctx->sock); sh->shard.erase(ctx->sock); delete ctx; continue; }
+            if(req_length == CLOSE_ERASE_CONTINUE){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 
             std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
-            if(req.error == REQUEST_MALFORMED){ closesocket(ctx->sock); sh->shard.erase(ctx->sock); delete ctx; continue; }
+            if(req.error == REQUEST_MALFORMED){ delete ctx; closesocket(ctx->sock); sh->shard.erase(ctx->sock); continue; }
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
