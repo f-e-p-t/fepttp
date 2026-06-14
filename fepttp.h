@@ -29,8 +29,8 @@ using namespace Definitions;
 enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
-    std::string reqacc;
-    bool wsarecv_no_retry = false;
+    std::string acc;
+    bool io_no_retry = false;
 };
 
 struct CmapShard{
@@ -128,7 +128,7 @@ public:
                 case SetTimeout::CallbackType::PostWSARecv: // ---------- WSARecv post callback ----------
                 {
                 CmapShard * sh = scmap.GetShard(t.sock);
-                if(!sh->shard[t.sock].wsarecv_no_retry){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
+                if(!sh->shard[t.sock].io_no_retry){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
                 break;
                 }
 
@@ -157,6 +157,7 @@ private:
     std::atomic<int> posted_acceptexs = 0;
 
     ShardedCmap scmap;
+    ShardedCmap scmap_send;
     
     TimeoutList tl;
 
@@ -231,7 +232,7 @@ private:
             if(PostWSARecv(sock) == IO_POST_SUCCESS){
                 {   // <<<--------------->>>
                 CmapShard * sh = scmap.GetShard(sock); std::scoped_lock lock(sh->mtx);
-                sh->shard[sock].wsarecv_no_retry = true;
+                sh->shard[sock].io_no_retry = true;
                 }   // <<<--------------->>>
             };
 
@@ -342,14 +343,14 @@ private:
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].reqacc.append(ctx->bufs[0].buf, bytes);
+            sh->shard[ctx->sock].acc.append(ctx->bufs[0].buf, bytes);
             }   // <<<--------------->>>
 
-            int req_length = parser.RequestLength(sh->shard[ctx->sock].reqacc);
+            int req_length = parser.RequestLength(sh->shard[ctx->sock].acc);
             if(req_length == CONTINUE){ // WSARecv is posted here
                 {   // <<<--------------->>>
                 std::scoped_lock lock(sh->mtx);
-                sh->shard[ctx->sock].wsarecv_no_retry = false;
+                sh->shard[ctx->sock].io_no_retry = false;
                 }   // <<<--------------->>>
                 if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
                 delete ctx; continue;
@@ -363,8 +364,8 @@ private:
                 delete ctx; continue;
             }
 
-            std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
-            HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
+            std::cout << sh->shard[ctx->sock].acc.substr(0, req_length) << std::endl;
+            HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].acc);
             if(req.error == REQUEST_MALFORMED){ // Close, erase, continue
                 closesocket(ctx->sock);
                 {   // <<<--------------->>>
@@ -376,17 +377,21 @@ private:
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].reqacc.erase(0, req_length);
+            sh->shard[ctx->sock].acc.erase(0, req_length);
             }   // <<<--------------->>>
 
             {   // <<<--------------->>>
             std::scoped_lock lock(sh->mtx);
-            sh->shard[ctx->sock].wsarecv_no_retry = false;
+            sh->shard[ctx->sock].io_no_retry = false;
             }   // <<<--------------->>>
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
-            // Middleware here, after the recv I/O repost. If it were put before, the socket is essential blocking up to middleware
-            //
+            // Middleware here, after the recv I/O repost. If it were put before, the socket is essentially blocking (up to middleware)
+            {
+                HTTPResponse res;
+                res.status_code = 401;
+                res.AddHeader("New header", "text for example header");
+            }
 
             delete ctx;
             break;
@@ -455,12 +460,3 @@ private:
         return 0;
     }
 };
-
-int main(){
-    //
-
-    Fepttp server = Fepttp(8000);
-    server.run();
-
-    return 0;
-}
