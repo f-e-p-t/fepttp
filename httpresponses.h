@@ -58,6 +58,8 @@ private:
             res += ("\r\n" + h.name + ": " + h.value);
         }
 
+        res += "\r\nConnection: keep-alive";
+
         res += "\r\n\r\n";
 
         // Assemble body

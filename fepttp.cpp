@@ -83,11 +83,10 @@ struct RecvContext{
 struct SendContext{
     SOCKET sock;
     WSABUF bufs[1];
-    char sendbuf[SEND_BUFFER_SIZE];
+    char * sendbuf;
 
     SendContext(){
         bufs[0].buf = sendbuf;
-        bufs[0].len = sizeof(sendbuf);
     }
 };
 
@@ -98,10 +97,6 @@ public:
     }
 
     ~Fepttp(){
-
-    }
-
-    void SendResponse(){
 
     }
 
@@ -246,8 +241,35 @@ private:
         { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
     }
 
-    int SendRequest(SOCKET sock, std::string res){
-        
+    int PostWSASend(SOCKET sock, std::string &res_chunk){
+        SendContext * ctx = new SendContext();
+        IOContextPtr * ctxptr = new IOContextPtr();
+        ctxptr->ptr = (void *)ctx;
+        ctxptr->optype = OpType::Send;
+        ctx->sock = sock;
+        flags = 0;
+        ctx->bufs[0].buf = res_chunk.data();
+        ctx->bufs[0].len = res_chunk.length();
+        int success = WSASend(
+            sock,
+            ctx->bufs,
+            1,
+            NULL,
+            flags,
+            &ctxptr->ov,
+            NULL
+        );
+
+        if(success == SOCKET_ERROR){
+            auto err = WSAGetLastError();
+            if(err != ERROR_IO_PENDING){
+                std::cout << "Error with WSASend. Error: " << err << std::endl;
+                closesocket(sock); delete ctx; delete ctxptr;
+                return IO_POST_FAILURE;
+            }
+        }
+
+        return IO_POST_SUCCESS;
     }
 
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
@@ -343,7 +365,6 @@ private:
 
             std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
-            std::cout << req.method << ", " << req.GetHeader("Postman-Token") << std::endl;
             if(req.error == REQUEST_MALFORMED){ // Close, erase, continue
                 closesocket(ctx->sock);
                 {   // <<<--------------->>>
@@ -365,7 +386,7 @@ private:
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             // Middleware here, after the recv I/O repost. If it were put before, the socket is essential blocking up to middleware
-            
+            //
 
             delete ctx;
             break;
@@ -436,9 +457,7 @@ private:
 };
 
 int main(){
-    HTTPResponse res;
-    res.status_code = 403;
-    res.Send();
+    //
 
     Fepttp server = Fepttp(8000);
     server.run();
