@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <iostream>
+#include <algorithm>
 
 using namespace Config;
 using namespace Definitions;
@@ -49,11 +50,15 @@ private:
         res += ("HTTP/1.1 " + std::to_string(status_code) + " " + status[status_code] + "\r\n");
 
         // Assemble response headers (controlled by server, not by user)
-        res += "Server: Fepttp\r\n";
-        res += ("Date: " + FormattedDateAndTime() + "\r\n");
-        res += ("Cache-Control: " + cache_control + "\r\n");
+        res += "Server: Fepttp";
+        res += ("\r\nDate: " + FormattedDateAndTime());
+        res += ("\r\nCache-Control: " + cache_control);
         
-        // Assemble representation headers
+        for(const auto& h : headers){
+            res += ("\r\n" + h.name + ": " + h.value);
+        }
+
+        res += "\r\n\r\n";
 
         // Assemble body
 
@@ -63,17 +68,28 @@ private:
 
 public:
     void SetHeader(std::string name, std::string value){
-        // 
+        for(auto& h : headers){
+            if(h.name == name){ h.value = value; }
+        }
     }
 
-    void GetHeader(std::string name){
-        // This is application layer stuff
+    std::string GetHeader(std::string name){
+        for(const auto& h : headers){
+            if(h.name == name){ return h.value; }
+        }
+        return "";
     }
 
     void AddHeader(std::string name, std::string value){
         Header h = Header(name, value);
         headers.push_back(h);
     };
+
+    void DeleteHeader(std::string name){
+        headers.erase(std::remove_if(headers.begin(), headers.end(),
+            [&](const Header& h){ return h.name == name; }
+        ), headers.end());
+    }
 
     int status_code;
 

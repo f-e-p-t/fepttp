@@ -101,6 +101,10 @@ public:
 
     }
 
+    void SendResponse(){
+
+    }
+
     void run(){
         SYSTEM_INFO sysinfo{}; GetSystemInfo(&sysinfo); auto worker_count = 2 * sysinfo.dwNumberOfProcessors;
         for(int i = 0; i < worker_count; i++){
@@ -242,33 +246,8 @@ private:
         { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
     }
 
-    int PostWSASend(SOCKET sock){
-        RecvContext * ctx = new RecvContext();
-        IOContextPtr * ctxptr = new IOContextPtr();
-        ctxptr->ptr = (void *)ctx;
-        ctxptr->optype = OpType::Send;
-        ctx->sock = sock;
-        flags = 0;
-        int success = WSASend(
-            sock,
-            ctx->bufs,
-            1,
-            NULL,
-            flags,
-            &ctxptr->ov,
-            NULL
-        );
-
-        if(success == SOCKET_ERROR){
-            auto err = WSAGetLastError();
-            if(err != ERROR_IO_PENDING){
-                std::cout << "Error with WSASend. Error: " << err << std::endl;
-                closesocket(sock); delete ctx; delete ctxptr;
-                return IO_POST_FAILURE;
-            }
-        }
-
-        return IO_POST_SUCCESS;
+    int SendRequest(SOCKET sock, std::string res){
+        
     }
 
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
@@ -283,7 +262,7 @@ private:
             if(err == ERROR_ABANDONED_WAIT_0){ break; /* IOCP gone. All threads will shut down */ }
             continue;
         }
-        //std::cout << num_removed << std::endl;
+
         for(int i = 0; i < num_removed; i++){
             OVERLAPPED * ovptr = entries[i].lpOverlapped;
             IOContextPtr * ctxptr = CONTAINING_RECORD(ovptr, IOContextPtr, ov);
@@ -362,9 +341,9 @@ private:
                 delete ctx; continue;
             }
 
-            //std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
+            std::cout << sh->shard[ctx->sock].reqacc.substr(0, req_length) << std::endl;
             HTTPRequest req = parser.ParseRequest(sh->shard[ctx->sock].reqacc);
-            std::cout << req.method << ", " << req.GetHeader("Host") << std::endl;
+            std::cout << req.method << ", " << req.GetHeader("Postman-Token") << std::endl;
             if(req.error == REQUEST_MALFORMED){ // Close, erase, continue
                 closesocket(ctx->sock);
                 {   // <<<--------------->>>
@@ -384,6 +363,9 @@ private:
             sh->shard[ctx->sock].wsarecv_no_retry = false;
             }   // <<<--------------->>>
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
+
+            // Middleware here, after the recv I/O repost. If it were put before, the socket is essential blocking up to middleware
+            
 
             delete ctx;
             break;
@@ -454,6 +436,10 @@ private:
 };
 
 int main(){
+    HTTPResponse res;
+    res.status_code = 403;
+    res.Send();
+
     Fepttp server = Fepttp(8000);
     server.run();
 
