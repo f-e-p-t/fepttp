@@ -4,6 +4,7 @@
 #include "timeout.h"
 #include "httpparsing.h"
 #include "httpresponses.h"
+#include "middlewaretest.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -273,6 +274,14 @@ private:
         return IO_POST_SUCCESS;
     }
 
+    int SendResponse(HTTPResponse res){
+        std::string string_form = res.Assemble();
+
+        // Deal with the PostWSASend calls
+
+        return 0;
+    }
+
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
     HANDLE iocp = (HANDLE)iocpptr;
     while(true){
@@ -386,12 +395,9 @@ private:
             }   // <<<--------------->>>
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
-            // Middleware here, after the recv I/O repost. If it were put before, the socket is essentially blocking (up to middleware)
-            {
-                HTTPResponse res;
-                res.status_code = 401;
-                res.AddHeader("New header", "text for example header");
-            }
+            HTTPResponse res;
+            // Middleware(req, res) here to prepare the response
+            SendResponse(res);
 
             delete ctx;
             break;

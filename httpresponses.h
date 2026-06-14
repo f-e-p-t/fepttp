@@ -43,31 +43,6 @@ private:
         return "";
     }
 
-    std::string Assemble(){
-        std::string res = "";
-
-        // Assemble status line
-        res += ("HTTP/1.1 " + std::to_string(status_code) + " " + status[status_code] + "\r\n");
-
-        // Assemble response headers (controlled by server, not by user)
-        res += "Server: Fepttp";
-        res += ("\r\nDate: " + FormattedDateAndTime());
-        res += ("\r\nCache-Control: " + cache_control);
-        
-        for(const auto& h : headers){
-            res += ("\r\n" + h.name + ": " + h.value);
-        }
-
-        res += "\r\nConnection: keep-alive";
-
-        res += "\r\n\r\n";
-
-        // Assemble body
-
-        // Return the assembled response
-        return res;
-    }
-
 public:
     void SetHeader(std::string name, std::string value){
         for(auto& h : headers){
@@ -98,9 +73,28 @@ public:
     // Default is "no-cache"
     std::string cache_control = "no-cache";
 
-    void Send(){
-        // Send the request to the server (call some server method; let the server handle the sending)
-        // Temporary for testing:
-        std::cout << Assemble() << std::endl;
-    };
+    std::string Assemble(){
+        std::string res = "";
+
+        // Assemble status line
+        res += ("HTTP/1.1 " + std::to_string(status_code) + " " + status[status_code] + "\r\n");
+
+        // Assemble response headers (controlled by server, not by user)
+        res += "Server: Fepttp";
+        res += ("\r\nDate: " + FormattedDateAndTime());
+        res += ("\r\nCache-Control: " + cache_control);
+        
+        for(const auto& h : headers){
+            res += ("\r\n" + h.name + ": " + h.value);
+        }
+
+        res += "\r\nConnection: keep-alive";
+
+        res += "\r\n\r\n";
+
+        // Assemble body
+
+        // Return the assembled response
+        return res;
+    }
 };
