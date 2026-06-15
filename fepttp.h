@@ -228,7 +228,7 @@ private:
     }
 
     void ScheduleRetryPostWSARecv(SOCKET sock){
-        // Create a timeout to retry the WSARecv post which sets the flag to true if succesful
+        // Create a timeout to retry the WSARecv post which sets the flag to true if successful
         SetTimeout::Timeout t([sock, this](){
             if(PostWSARecv(sock) == IO_POST_SUCCESS){
                 {   // <<<--------------->>>
@@ -274,10 +274,19 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    int SendResponse(HTTPResponse res){
-        std::string string_form = res.Assemble();
+    int SendResponse(SOCKET sock, HTTPResponse res){
+        CmapShard * sh = scmap_send.GetShard(sock);
+        std::string res_string = res.Assemble();
 
-        // Deal with the PostWSASend calls
+        // Test code that sends 4096 bytes only and does not repost WSASend
+        {   // <<<--------------->>>
+        std::scoped_lock lock(sh->mtx);
+        sh->shard[sock].acc.append(res_string);
+
+        std::string res_chunk = sh->shard[sock].acc.substr(0, 4096);
+        PostWSASend(sock, res_chunk);
+        sh->shard[sock].acc.erase(0, res_chunk.length());
+        }   // <<<--------------->>>
 
         return 0;
     }
@@ -396,8 +405,8 @@ private:
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             HTTPResponse res;
-            // Middleware(req, res) here to prepare the response
-            SendResponse(res);
+            res = CreateResponse(req, res); // Example middleware that produces a simple HTTP response
+            SendResponse(ctx->sock, res);
 
             delete ctx;
             break;
@@ -409,7 +418,11 @@ private:
             CmapShard * sh = scmap.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
-            std::cout << "Send operation completed on socket " << ctx->sock << std::endl;
+            std::cout << "Send operation completed" << std::endl;
+
+            // We're here - a WSASend has successfully completed.
+
+            // If there is more acc to be sent, post another WSASend
 
             delete ctx;
             break;
