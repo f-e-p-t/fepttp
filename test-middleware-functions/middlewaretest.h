@@ -1,7 +1,7 @@
-#include "httpresponses.h"
+#include "../httpresponses.h"
 #include <iostream>
 
 HTTPResponse CreateResponse(HTTPRequest req, HTTPResponse res){
-    res.status_code = 200;
+    res.status_code = 304;
     return res; 
 }

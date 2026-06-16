@@ -3,8 +3,8 @@
 #include "definitions.h"
 #include "timeout.h"
 #include "httpparsing.h"
-#include "httpresponses.h"
-#include "middlewaretest.h"
+#include "httpresponses.h"  
+#include "test-middleware-functions/middlewaretest.h"
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -49,6 +49,33 @@ private:
 
 public:
     CmapShard * GetShard(SOCKET sock){
+        const int sh = GetShardIndex(sock);
+        return &shards[sh];
+    }
+};
+
+struct SOCKET_INFO_s {
+    std::string drain;
+    std::string stream;
+    bool io_no_retry = false;
+    bool draining = false;
+};
+
+struct CmapShard_s {
+    std::mutex mtx;
+    std::unordered_map<SOCKET, SOCKET_INFO_s> shard;
+};
+
+class ShardedCmap_s{
+private:
+    int GetShardIndex(SOCKET sock){
+        return Utils::hashint(sock, CMAP_NUM_SHARDS);
+    }
+
+    std::vector<CmapShard_s> shards{CMAP_NUM_SHARDS};
+
+public:
+    CmapShard_s * GetShard(SOCKET sock){
         const int sh = GetShardIndex(sock);
         return &shards[sh];
     }
@@ -158,7 +185,7 @@ private:
     std::atomic<int> posted_acceptexs = 0;
 
     ShardedCmap scmap;
-    ShardedCmap scmap_send;
+    ShardedCmap_s scmap_s;
     
     TimeoutList tl;
 
@@ -274,13 +301,36 @@ private:
         return IO_POST_SUCCESS;
     }
 
-    int SendResponse(SOCKET sock, HTTPResponse res){
+    void SendResponse(SOCKET sock, HTTPResponse res){
 
         // Idea: ping-pong buffer.
-        // Two accumulators. They can be swapped around in positions drain and build. Drain is drained, build is appended to.
-        // Append to build acc. If drain acc is draining, leave it there. If it is empty, swap the accs and set the drain acc
-        // to drain. When the drain acc finishes draining, swap the two, so the build acc becomes empty.
+        // Two accumulators. They can be swapped around in POSITIONS drain and stream. Drain is drained, stream is appended to.
+        // Append to stream acc. If drain acc is draining, leave it there. If it is empty, swap the accs and set the drain acc
+        // to drain. When the drain acc finishes draining, swap the two, so the stream acc becomes empty.
 
+        CmapShard_s * sh_s = scmap_s.GetShard(sock);
+        std::string res_str = res.Assemble();
+
+        {   // <<<--------------->>>
+        std::scoped_lock lock(sh_s->mtx);
+        // Unconditionally append the whole response to stream
+        sh_s->shard[sock].stream.append(res_str);
+
+        // If draining has finished (so, drain is empty)
+        if(!sh_s->shard[sock].draining){
+            // Swap drain and stream
+            std::swap(sh_s->shard[sock].drain, sh_s->shard[sock].stream);
+            // Toggle 'draining' on, since we are about to start it
+            sh_s->shard[sock].draining = true;
+            // Copy the first buffer-sized chunk of drain and erase it
+            std::string res_chunk = res_str.substr(0, SEND_BUFFER_SIZE);
+            sh_s->shard[sock].drain.erase(0, res_chunk.length());
+            // Send it off. Completion will be caught in OpType::Send
+            PostWSASend(sock, res_chunk); // NEEDS ERROR HANDLING HERE
+        }
+
+        // Otherwise, take no action and let OpType::Send do the swap later
+        }   // <<<--------------->>>
     }
 
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
@@ -397,7 +447,7 @@ private:
             if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
 
             HTTPResponse res;
-            res = CreateResponse(req, res); // Example middleware that produces a simple HTTP response
+            res = CreateResponse(req, res); // Example middleware that produces a simple HTTP response with code 304
             SendResponse(ctx->sock, res);
 
             delete ctx;
@@ -407,14 +457,37 @@ private:
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
             {
             SendContext * ctx = (SendContext *)ctxptr->ptr; delete ctxptr;
-            CmapShard * sh = scmap.GetShard(ctx->sock);
+            CmapShard_s * sh_s = scmap_s.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
-            std::cout << "Send operation completed" << std::endl;
+            std::cout << "Send operation completed on socket " << ctx->sock << std::endl;
 
-            // We're here - a WSASend has successfully completed.
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh_s->mtx);
+            // If drain is empty ...
+            if(sh_s->shard[ctx->sock].drain.empty()){
+                // If stream is also emtpy, toggle 'draining' off and continue without reposting WSASend
+                if(sh_s->shard[ctx->sock].stream.empty()){ sh_s->shard[ctx->sock].draining = false; delete ctx; continue; }
 
-            // If there is more acc to be sent, post another WSASend
+                // If stream is non-empty, swap drain and stream, and restart draining
+                std::swap(sh_s->shard[ctx->sock].drain, sh_s->shard[ctx->sock].stream);
+                // Toggle on 'draining'
+                sh_s->shard[ctx->sock].draining = true;
+                // Copy a buffer sized chunk of drain and erase it
+                std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
+                sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
+                // Send it off and continue
+                PostWSASend(ctx->sock, res_chunk); // ERROR HANDLING NEEDED HERE
+                delete ctx; continue;
+            }
+
+            // If drain is not empty, we proceed with draining
+            // Same procedure as above
+            std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
+            sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
+            PostWSASend(ctx->sock, res_chunk);
+            delete ctx; continue;
+            }   // <<<--------------->>>
 
             delete ctx;
             break;
