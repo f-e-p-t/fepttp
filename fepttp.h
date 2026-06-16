@@ -275,20 +275,12 @@ private:
     }
 
     int SendResponse(SOCKET sock, HTTPResponse res){
-        CmapShard * sh = scmap_send.GetShard(sock);
-        std::string res_string = res.Assemble();
 
-        // Test code that sends 4096 bytes only and does not repost WSASend
-        {   // <<<--------------->>>
-        std::scoped_lock lock(sh->mtx);
-        sh->shard[sock].acc.append(res_string);
+        // Idea: ping-pong buffer.
+        // Two accumulators. They can be swapped around in positions drain and build. Drain is drained, build is appended to.
+        // Append to build acc. If drain acc is draining, leave it there. If it is empty, swap the accs and set the drain acc
+        // to drain. When the drain acc finishes draining, swap the two, so the build acc becomes empty.
 
-        std::string res_chunk = sh->shard[sock].acc.substr(0, 4096);
-        PostWSASend(sock, res_chunk);
-        sh->shard[sock].acc.erase(0, res_chunk.length());
-        }   // <<<--------------->>>
-
-        return 0;
     }
 
     DWORD WINAPI WorkerFunction(LPVOID iocpptr){
