@@ -8,7 +8,8 @@
 namespace SetTimeout {
     enum CallbackType {
         Generic,
-        PostWSARecv
+        PostWSARecv,
+        PostWSASend
     };
 
     class Timeout {

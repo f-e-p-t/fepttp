@@ -160,6 +160,13 @@ public:
                 break;
                 }
 
+                case SetTimeout::CallbackType::PostWSASend: // ---------- WSASend post callback ----------
+                {
+                CmapShard_s * sh_s = scmap_s.GetShard(t.sock);
+                if(!sh_s->shard[t.sock].io_no_retry){ RepeatTimeout(t, IO_RETRY_DELAY_MS); }
+                break;
+                }
+
                 default: { break; } // --------------------
                 }
                 }
@@ -258,8 +265,9 @@ private:
         // Create a timeout to retry the WSARecv post which sets the flag to true if successful
         SetTimeout::Timeout t([sock, this](){
             if(PostWSARecv(sock) == IO_POST_SUCCESS){
+                CmapShard * sh = scmap.GetShard(sock);
                 {   // <<<--------------->>>
-                CmapShard * sh = scmap.GetShard(sock); std::scoped_lock lock(sh->mtx);
+                std::scoped_lock lock(sh->mtx);
                 sh->shard[sock].io_no_retry = true;
                 }   // <<<--------------->>>
             };
@@ -270,7 +278,7 @@ private:
         { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
     }
 
-    int PostWSASend(SOCKET sock, std::string &res_chunk){
+    int PostWSASend(SOCKET sock, std::string res_chunk){
         SendContext * ctx = new SendContext();
         IOContextPtr * ctxptr = new IOContextPtr();
         ctxptr->ptr = (void *)ctx;
@@ -301,13 +309,21 @@ private:
         return IO_POST_SUCCESS;
     }
 
+    void ScheduleRetryPostWSASend(SOCKET sock, std::string res_chunk){
+        SetTimeout::Timeout t([sock, res_chunk, this](){
+            if(PostWSASend(sock, res_chunk) == IO_POST_SUCCESS){
+                CmapShard_s * sh_s = scmap_s.GetShard(sock);
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh_s->mtx);
+                sh_s->shard[sock].io_no_retry = true;
+                }   // <<<--------------->>>
+            };
+        }, SetTimeout::CallbackType::PostWSASend, IO_RETRY_DELAY_MS, sock);
+
+        { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(t); }
+    }
+
     void SendResponse(SOCKET sock, HTTPResponse res){
-
-        // Idea: ping-pong buffer.
-        // Two accumulators. They can be swapped around in POSITIONS drain and stream. Drain is drained, stream is appended to.
-        // Append to stream acc. If drain acc is draining, leave it there. If it is empty, swap the accs and set the drain acc
-        // to drain. When the drain acc finishes draining, swap the two, so the stream acc becomes empty.
-
         CmapShard_s * sh_s = scmap_s.GetShard(sock);
         std::string res_str = res.Assemble();
 
@@ -326,7 +342,7 @@ private:
             std::string res_chunk = res_str.substr(0, SEND_BUFFER_SIZE);
             sh_s->shard[sock].drain.erase(0, res_chunk.length());
             // Send it off. Completion will be caught in OpType::Send
-            PostWSASend(sock, res_chunk); // NEEDS ERROR HANDLING HERE
+            if(PostWSASend(sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(sock, res_chunk); }
         }
 
         // Otherwise, take no action and let OpType::Send do the swap later
@@ -477,15 +493,15 @@ private:
                 std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
                 sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
                 // Send it off and continue
-                PostWSASend(ctx->sock, res_chunk); // ERROR HANDLING NEEDED HERE
+                if(PostWSASend(ctx->sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(ctx->sock, res_chunk); }
                 delete ctx; continue;
             }
 
             // If drain is not empty, we proceed with draining
-            // Same procedure as above
+            // Same procedure as above, but 'draining' will already be toggled on
             std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
             sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
-            PostWSASend(ctx->sock, res_chunk);
+            if(PostWSASend(ctx->sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(ctx->sock, res_chunk); };
             delete ctx; continue;
             }   // <<<--------------->>>
 
