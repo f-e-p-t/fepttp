@@ -3,6 +3,7 @@
 
 HTTPResponse CreateResponse(HTTPRequest req, HTTPResponse res){
     res.status_code = 304;
-    res.AddHeader("This will break postman", "header text");
+    res.AddHeader("Header", "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
+    //res.AddHeader("This will break postman", "header text");
     return res; 
 }

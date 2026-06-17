@@ -354,6 +354,7 @@ private:
     }
 
     void SendResponse(SOCKET sock, HTTPResponse res){
+        CmapShard * sh = scmap.GetShard(sock);
         CmapShard_s * sh_s = scmap_s.GetShard(sock);
         std::string res_str = res.Assemble();
 
@@ -381,7 +382,11 @@ private:
                 }
 
                 case ERASE_CONTINUE: {
-                    sh_s->shard.erase(sock); break; // No 
+                    {   // <<<--------------->>>
+                    std::scoped_lock lock(sh->mtx);
+                    sh->shard.erase(sock);
+                    }   // <<<--------------->>>
+                    sh_s->shard.erase(sock); break;
                 }
 
                 case SCHEDULE_RETRY: {
@@ -464,6 +469,7 @@ private:
             {
             RecvContext * ctx = (RecvContext *)ctxptr->ptr; delete ctxptr;
             CmapShard * sh = scmap.GetShard(ctx->sock);
+            CmapShard_s * sh_s = scmap_s.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
             if(bytes == 0){
@@ -478,6 +484,10 @@ private:
                 {   // <<<--------------->>>
                 std::scoped_lock lock(sh->mtx);
                 sh->shard.erase(ctx->sock);
+                }   // <<<--------------->>>
+                {   // <<<--------------->>>
+                std::scoped_lock lock(sh_s->mtx);
+                sh_s->shard.erase(ctx->sock);
                 }   // <<<--------------->>>
                 std::cout << "Socket gracefully closed: " << ctx->sock << std::endl;
                 delete ctx; continue;
@@ -503,11 +513,15 @@ private:
                         break;
                     }
 
-                    // Socket has disappeared - erase its info and continue
+                    // Socket has disappeared - erase its info in both scmaps and continue
                     case ERASE_CONTINUE: {
                         {   // <<<--------------->>>
                         std::scoped_lock lock(sh->mtx);
                         sh->shard.erase(ctx->sock);
+                        }   // <<<--------------->>>
+                        {   // <<<--------------->>>
+                        std::scoped_lock lock(sh_s->mtx);
+                        sh_s->shard.erase(ctx->sock);
                         }   // <<<--------------->>>
                         break;
                     }
@@ -567,6 +581,10 @@ private:
                     std::scoped_lock lock(sh->mtx);
                     sh->shard.erase(ctx->sock);
                     }   // <<<--------------->>>
+                    {   // <<<--------------->>>
+                    std::scoped_lock lock(sh_s->mtx);
+                    sh_s->shard.erase(ctx->sock);
+                    }   // <<<--------------->>>
                     delete ctx; continue; break;
                 }
 
@@ -591,6 +609,7 @@ private:
             case OpType::Send: // --------------------------------- Send operation --------------------------------------------
             {
             SendContext * ctx = (SendContext *)ctxptr->ptr; delete ctxptr;
+            CmapShard * sh = scmap.GetShard(ctx->sock);
             CmapShard_s * sh_s = scmap_s.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
@@ -621,6 +640,10 @@ private:
                     }
 
                     case ERASE_CONTINUE: {
+                        {   // <<<--------------->>>
+                        std::scoped_lock lock(sh->mtx);
+                        sh->shard.erase(ctx->sock);
+                        }   // <<<--------------->>>
                         sh_s->shard.erase(ctx->sock); // Already have mutex
                         delete ctx; continue; break;
                     }
@@ -650,6 +673,10 @@ private:
                 }
 
                 case ERASE_CONTINUE: {
+                    {   // <<<--------------->>>
+                    std::scoped_lock lock(sh->mtx);
+                    sh->shard.erase(ctx->sock);
+                    }   // <<<--------------->>>
                     sh_s->shard.erase(ctx->sock); // Already have mutex
                     delete ctx; continue; break;
                 }
