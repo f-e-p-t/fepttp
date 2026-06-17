@@ -30,7 +30,7 @@ using namespace Definitions;
 enum OpType { Accept, Recv, Send };
 
 struct SOCKET_INFO {
-    std::string acc;
+    std::string acc = "";
     bool io_no_retry = false;
 };
 
@@ -204,7 +204,6 @@ private:
     }
 
     int ParseErrorWSARecv(int err){
-        std::cout << err << std::endl;
         switch(err){
         case ERROR_IO_PENDING:
         {
@@ -373,7 +372,27 @@ private:
             std::string res_chunk = res_str.substr(0, SEND_BUFFER_SIZE);
             sh_s->shard[sock].drain.erase(0, res_chunk.length());
             // Send it off. Completion will be caught in OpType::Send
-            if(PostWSASend(sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(sock, res_chunk); }
+            int result = PostWSASend(sock, res_chunk);
+            if(result != 0){
+                switch(ParseErrorWSASend(result)){
+
+                case NO_ERR: {
+                    break;
+                }
+
+                case ERASE_CONTINUE: {
+                    sh_s->shard.erase(sock); break; // No 
+                }
+
+                case SCHEDULE_RETRY: {
+                    ScheduleRetryPostWSASend(sock, res_chunk); break;
+                }
+
+                default: {
+                    break;
+                }
+                }
+            }
         }
 
         // Otherwise, take no action and let OpType::Send do the swap later
@@ -414,12 +433,28 @@ private:
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
-            {   // <<<--------------->>>
-            std::scoped_lock lock(sh->mtx);
-            sh->shard.insert({ctx->sock, {""}});
-            }   // <<<--------------->>>
+            int result = PostWSARecv(ctx->sock);
+            if(result != 0){ // WSARecv error handling
+                switch(ParseErrorWSARecv(result)){
 
-            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
+                case NO_ERR: {
+                    break;
+                }
+
+                case ERASE_CONTINUE: {
+                    // The key (socket) has not been put into scmap yet
+                    break;
+                }
+
+                case SCHEDULE_RETRY: {
+                    ScheduleRetryPostWSARecv(ctx->sock); break;
+                }
+
+                default: {
+                    break;
+                }
+                }
+            }
 
             delete ctx;
             break;
@@ -460,7 +495,7 @@ private:
                 sh->shard[ctx->sock].io_no_retry = false;
                 }   // <<<--------------->>>
                 int result = PostWSARecv(ctx->sock);
-                if(result != 0){ // IO post error handling
+                if(result != 0){ // WSARecv error handling
                     switch(ParseErrorWSARecv(result)){
 
                     // Not an actual error - proceed
@@ -520,7 +555,7 @@ private:
             sh->shard[ctx->sock].io_no_retry = false;
             }   // <<<--------------->>>
             int result = PostWSARecv(ctx->sock);
-            if(result != 0){
+            if(result != 0){ // WSARecv error handling
                 switch(ParseErrorWSARecv(result)){
 
                 case NO_ERR: {
@@ -532,8 +567,7 @@ private:
                     std::scoped_lock lock(sh->mtx);
                     sh->shard.erase(ctx->sock);
                     }   // <<<--------------->>>
-                    delete ctx; continue;
-                    break;
+                    delete ctx; continue; break;
                 }
 
                 case SCHEDULE_RETRY: {
@@ -576,20 +610,28 @@ private:
                 // Copy a buffer sized chunk of drain and erase it
                 std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
                 sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
-                // Send it off and continue
+                // Send it off with error handling and continue
+                sh_s->shard[ctx->sock].io_no_retry = false;
                 int result = PostWSASend(ctx->sock, res_chunk);
-                if(result != 0){ // NEEDS WORK
+                if(result != 0){ // WSASend error handling
                     switch(ParseErrorWSASend(result)){
-                    case NO_ERR: { break; }
-                    case ERASE_CONTINUE: {
-                    {   // <<<--------------->>>
-                    // LATER
-                    }   // <<<--------------->>>
-                    delete ctx; continue;
-                    break;
+
+                    case NO_ERR: {
+                        break;
                     }
-                    case SCHEDULE_RETRY: { ScheduleRetryPostWSASend(ctx->sock, res_chunk); break; }
-                    default: { break; }
+
+                    case ERASE_CONTINUE: {
+                        sh_s->shard.erase(ctx->sock); // Already have mutex
+                        delete ctx; continue; break;
+                    }
+
+                    case SCHEDULE_RETRY: {
+                        ScheduleRetryPostWSASend(ctx->sock, res_chunk); break;
+                    }
+
+                    default: {
+                        break;
+                    }
                     }
                 }
                 delete ctx; continue;
@@ -600,18 +642,25 @@ private:
             std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
             sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
             int result = PostWSASend(ctx->sock, res_chunk);
-            if(result != 0){ // NEEDS WORK TOO!
+            if(result != 0){ // WSASend error handling
                 switch(ParseErrorWSASend(result)){
-                case NO_ERR: { break; }
-                case ERASE_CONTINUE: {
-                {   // <<<--------------->>>
-                // LATER
-                }   // <<<--------------->>>
-                delete ctx; continue;
-                break;
+
+                case NO_ERR: {
+                    break;
                 }
-                case SCHEDULE_RETRY: { ScheduleRetryPostWSASend(ctx->sock, res_chunk); break; }
-                default: { break; }
+
+                case ERASE_CONTINUE: {
+                    sh_s->shard.erase(ctx->sock); // Already have mutex
+                    delete ctx; continue; break;
+                }
+
+                case SCHEDULE_RETRY: {
+                    ScheduleRetryPostWSASend(ctx->sock, res_chunk); break;
+                }
+
+                default: {
+                    break;
+                }
                 }
             }
             delete ctx; continue;
