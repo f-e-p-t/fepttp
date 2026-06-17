@@ -3,14 +3,41 @@
 #include <string>
 #include <string_view>
 #include <charconv>
+#include <unordered_map>
+#include <thread>
+#include <winsock2.h>
+
+
+std::unordered_map<int, int> hashmap;
+std::mutex mtx;
+
+void infinite_loop(){
+
+    while(true){
+        Sleep(250);
+        {
+        std::scoped_lock lock(mtx);
+        hashmap[500] = 4;
+        std::cout << "t " << std::endl;
+        }
+    }
+}
 
 int main(){
-    std::string_view str = "342";
+    for(int i = 0; i < 1000; i++){
+        hashmap[i] = i * i;
+    }
 
-    int strint;
-    auto result = std::from_chars(str.data(), str.data() + str.size(), strint);
+    std::thread th = std::thread(infinite_loop);
+    //th.join();
 
-    std::cout << 2 * strint << std::endl;
+    Sleep(2000);
+    {
+    std::scoped_lock lock(mtx);
+
+    }   
+
+    while(true){}
 
     return 0;
 }

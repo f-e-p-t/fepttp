@@ -203,6 +203,47 @@ private:
         { std::scoped_lock lock(tl.mtx); tl.timeouts.push_back(tt); }
     }
 
+    int ParseErrorWSARecv(int err){
+        std::cout << err << std::endl;
+        switch(err){
+        case ERROR_IO_PENDING:
+        {
+            return NO_ERR;
+            break;
+        }
+        case WSAENOTSOCK:
+        {
+            return ERASE_CONTINUE;
+            break;
+        }
+        default:
+        {
+            return SCHEDULE_RETRY;
+            break;
+        }
+        }
+    }
+
+    int ParseErrorWSASend(int err){
+        switch(err){
+        case ERROR_IO_PENDING:
+        {
+            return NO_ERR;
+            break;
+        }
+        case WSAENOTSOCK:
+        {
+            return ERASE_CONTINUE;
+            break;
+        }
+        default:
+        {
+            return SCHEDULE_RETRY;
+            break;
+        }
+        }
+    }
+
     int PostAcceptEx(){
         AcceptContext * ctx = new AcceptContext();
         IOContextPtr * ctxptr = new IOContextPtr();
@@ -251,14 +292,9 @@ private:
 
         if(success == SOCKET_ERROR){
             auto err = WSAGetLastError();
-            if(err != ERROR_IO_PENDING){
-                std::cout << "Error with WSARecv. Error: " << err << std::endl;
-                closesocket(sock); delete ctx; delete ctxptr;
-                return IO_POST_FAILURE;
-            }
+            return err;
         }
-
-        return IO_POST_SUCCESS;
+        return success;
     }
 
     void ScheduleRetryPostWSARecv(SOCKET sock){
@@ -299,14 +335,9 @@ private:
 
         if(success == SOCKET_ERROR){
             auto err = WSAGetLastError();
-            if(err != ERROR_IO_PENDING){
-                std::cout << "Error with WSASend. Error: " << err << std::endl;
-                closesocket(sock); delete ctx; delete ctxptr;
-                return IO_POST_FAILURE;
-            }
+            return err;
         }
-
-        return IO_POST_SUCCESS;
+        return success;
     }
 
     void ScheduleRetryPostWSASend(SOCKET sock, std::string res_chunk){
@@ -428,7 +459,35 @@ private:
                 std::scoped_lock lock(sh->mtx);
                 sh->shard[ctx->sock].io_no_retry = false;
                 }   // <<<--------------->>>
-                if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
+                int result = PostWSARecv(ctx->sock);
+                if(result != 0){ // IO post error handling
+                    switch(ParseErrorWSARecv(result)){
+
+                    // Not an actual error - proceed
+                    case NO_ERR: {
+                        break;
+                    }
+
+                    // Socket has disappeared - erase its info and continue
+                    case ERASE_CONTINUE: {
+                        {   // <<<--------------->>>
+                        std::scoped_lock lock(sh->mtx);
+                        sh->shard.erase(ctx->sock);
+                        }   // <<<--------------->>>
+                        break;
+                    }
+
+                    // This error can be fixed by trying again - schedule a retry
+                    case SCHEDULE_RETRY: {
+                        ScheduleRetryPostWSARecv(ctx->sock); break;
+                    }
+
+                    // The WSARecv error parser defaults to SCHEDULE_RETRY, so this should be unreachable
+                    default: {
+                        break;
+                    }
+                    }
+                }
                 delete ctx; continue;
             }
             if(req_length == CLOSE_ERASE_CONTINUE){
@@ -460,7 +519,32 @@ private:
             std::scoped_lock lock(sh->mtx);
             sh->shard[ctx->sock].io_no_retry = false;
             }   // <<<--------------->>>
-            if(PostWSARecv(ctx->sock) == IO_POST_FAILURE){ ScheduleRetryPostWSARecv(ctx->sock); }
+            int result = PostWSARecv(ctx->sock);
+            if(result != 0){
+                switch(ParseErrorWSARecv(result)){
+
+                case NO_ERR: {
+                    break;
+                }
+
+                case ERASE_CONTINUE: {
+                    {   // <<<--------------->>>
+                    std::scoped_lock lock(sh->mtx);
+                    sh->shard.erase(ctx->sock);
+                    }   // <<<--------------->>>
+                    delete ctx; continue;
+                    break;
+                }
+
+                case SCHEDULE_RETRY: {
+                    ScheduleRetryPostWSARecv(ctx->sock); break;
+                }
+
+                default: {
+                    break;
+                }
+                }
+            }
 
             HTTPResponse res;
             res = CreateResponse(req, res); // Example middleware that produces a simple HTTP response with code 304
@@ -493,7 +577,21 @@ private:
                 std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
                 sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
                 // Send it off and continue
-                if(PostWSASend(ctx->sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(ctx->sock, res_chunk); }
+                int result = PostWSASend(ctx->sock, res_chunk);
+                if(result != 0){ // NEEDS WORK
+                    switch(ParseErrorWSASend(result)){
+                    case NO_ERR: { break; }
+                    case ERASE_CONTINUE: {
+                    {   // <<<--------------->>>
+                    // LATER
+                    }   // <<<--------------->>>
+                    delete ctx; continue;
+                    break;
+                    }
+                    case SCHEDULE_RETRY: { ScheduleRetryPostWSASend(ctx->sock, res_chunk); break; }
+                    default: { break; }
+                    }
+                }
                 delete ctx; continue;
             }
 
@@ -501,7 +599,21 @@ private:
             // Same procedure as above, but 'draining' will already be toggled on
             std::string res_chunk = sh_s->shard[ctx->sock].drain.substr(0, SEND_BUFFER_SIZE);
             sh_s->shard[ctx->sock].drain.erase(0, res_chunk.length());
-            if(PostWSASend(ctx->sock, res_chunk) == IO_POST_FAILURE){ ScheduleRetryPostWSASend(ctx->sock, res_chunk); };
+            int result = PostWSASend(ctx->sock, res_chunk);
+            if(result != 0){ // NEEDS WORK TOO!
+                switch(ParseErrorWSASend(result)){
+                case NO_ERR: { break; }
+                case ERASE_CONTINUE: {
+                {   // <<<--------------->>>
+                // LATER
+                }   // <<<--------------->>>
+                delete ctx; continue;
+                break;
+                }
+                case SCHEDULE_RETRY: { ScheduleRetryPostWSASend(ctx->sock, res_chunk); break; }
+                default: { break; }
+                }
+            }
             delete ctx; continue;
             }   // <<<--------------->>>
 
