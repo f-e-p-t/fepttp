@@ -598,8 +598,10 @@ private:
                 }
             }
 
+            // Middleware ------------------------------
             HTTPResponse res;
-            res = CreateResponse(req, res); // Example middleware that produces a simple HTTP response with code 304
+            //res = Logger(req, res);
+            res = JohnMiddleware(req, res);
             SendResponse(ctx->sock, res);
 
             delete ctx;

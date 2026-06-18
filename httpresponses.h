@@ -14,6 +14,7 @@ using namespace Definitions;
 class HTTPResponse {
 private:
     std::vector<Header> headers;
+    std::string body;
 
     static inline std::unordered_map<int, std::string> status = {
         {100, "Continue"}, {101, "Switching Protocols"}, {102, "Processing"}, {103, "Early Hints"}, {200, "OK"}, {201, "Created"},
@@ -44,6 +45,7 @@ private:
     }
 
 public:
+    // Manual header methods
     void SetHeader(std::string name, std::string value){
         for(auto& h : headers){
             if(h.name == name){ h.value = value; }
@@ -66,6 +68,33 @@ public:
         headers.erase(std::remove_if(headers.begin(), headers.end(),
             [&](const Header& h){ return h.name == name; }
         ), headers.end());
+    }
+
+    // Manual body methods
+    void AppendToBody(std::string extra){
+        body += extra;
+    }
+
+    void TextPlain(std::string text){
+        Header h = Header("Content-Type", "text/plain");
+        Header hh = Header("Content-Length", std::to_string(text.length()));
+        headers.push_back(h); headers.push_back(hh);
+        body = text;
+    }
+
+    void TextHTML(std::string text){
+        Header h = Header("Content-Type", "text/html");
+        Header hh = Header("Content-Length", std::to_string(text.length()));
+        headers.push_back(h); headers.push_back(hh);
+        body = text;
+    }
+
+    // (The JSON needs to be stringified first)
+    void ApplicationJSON(std::string rawjson){
+        Header h = Header("Content-Type", "application/json");
+        Header hh = Header("Content-Length", std::to_string(rawjson.length()));
+        headers.push_back(h); headers.push_back(hh);
+        body = rawjson;
     }
 
     int status_code;
@@ -92,7 +121,7 @@ public:
 
         res += "\r\n\r\n";
 
-        // Assemble body
+        res += body;
 
         // Return the assembled response
         return res;
