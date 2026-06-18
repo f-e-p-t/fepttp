@@ -14,10 +14,18 @@ HTTPResponse Logger(HTTPRequest req, HTTPResponse res){
 }
 
 HTTPResponse JohnMiddleware(HTTPRequest req, HTTPResponse res){
+    if(req.body.find("brazil nut") != std::string::npos){
+        res.status_code = 403;
+        json j;
+        j["message"] = "Request rejected due to presence of brazil nuts";
+        res.ApplicationJSON(j.dump());
+        return res;
+    }
+
     res.status_code = 200;
-    json JohnJSON;
-    JohnJSON["Target of request"] = req.target;
-    JohnJSON["subobject"]["dsuga"] = "tsat";
-    res.ApplicationJSON(JohnJSON.dump());
-    return res; 
+    json j;
+    j["request target"] = req.target;
+    j["subobject"]["Order of Alt(10)"] = 1814400;
+    res.ApplicationJSON(j.dump());
+    return res;
 }
