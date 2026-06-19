@@ -32,6 +32,7 @@ enum OpType { Accept, Recv, Send };
 struct SOCKET_INFO {
     std::string acc = "";
     bool io_no_retry = false;
+    std::chrono::time_point<std::chrono::steady_clock> last_use;
 };
 
 struct CmapShard{
@@ -45,9 +46,10 @@ private:
         return Utils::hashint(sock, CMAP_NUM_SHARDS);
     }
 
+public:
+    // Only for direct access in sweepers
     std::vector<CmapShard> shards{CMAP_NUM_SHARDS};
 
-public:
     CmapShard * GetShard(SOCKET sock){
         const int sh = GetShardIndex(sock);
         return &shards[sh];
@@ -134,17 +136,19 @@ public:
             workers.emplace_back([this]() { this->WorkerFunction((LPVOID)IOCP); });
         }
 
+        sweepers.emplace_back([this]() { this->TimeoutSweeper(); });
+
         for(int i = 0; i < CONCURRENT_ACCEPTEXS; i++){ PostAcceptEx(); posted_acceptexs++; }
 
         // Housekeeping loop
         while(true){
-            Sleep(10);
+            Sleep(HOUSEKEEPER_POLL_RATE_MS);
             // Maintain the AcceptExs
             for(int i = posted_acceptexs; i < CONCURRENT_ACCEPTEXS; i++){
                 if(PostAcceptEx() == IO_POST_SUCCESS){ posted_acceptexs++; }
             }
 
-            // Handle timeouts
+            // Handle (set)timeouts
             auto now = std::chrono::steady_clock::now();
             for(auto& t : tl.timeouts){
                 if(now >= t.expiry){
@@ -197,6 +201,15 @@ private:
     TimeoutList tl;
 
     std::vector<std::thread> workers;
+    std::vector<std::thread> sweepers;
+
+    void UpdateSocketLastUse(SOCKET sock, CmapShard * sh){
+        auto now = std::chrono::steady_clock::now();
+        {   // <<<--------------->>>
+        std::scoped_lock lock(sh->mtx);
+        sh->shard[sock].last_use = now;
+        }   // <<<--------------->>>
+    }
 
     void RepeatTimeout(SetTimeout::Timeout t, int ms){
         SetTimeout::Timeout tt = SetTimeout::RecreateTimeout(t, ms);
@@ -438,6 +451,8 @@ private:
 
             std::cout << "Socket " << ctx->sock << " connected and associated to IOCP" << std::endl;
 
+            UpdateSocketLastUse(ctx->sock, sh);
+
             int result = PostWSARecv(ctx->sock);
             if(result != 0){ // WSARecv error handling
                 switch(ParseErrorWSARecv(result)){
@@ -471,6 +486,8 @@ private:
             CmapShard * sh = scmap.GetShard(ctx->sock);
             CmapShard_s * sh_s = scmap_s.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
+
+            UpdateSocketLastUse(ctx->sock, sh);
 
             if(bytes == 0){
                 const auto result = closesocket(ctx->sock);
@@ -615,6 +632,8 @@ private:
             CmapShard_s * sh_s = scmap_s.GetShard(ctx->sock);
             auto bytes = entries[i].dwNumberOfBytesTransferred;
 
+            UpdateSocketLastUse(ctx->sock, sh);
+
             std::cout << "Send operation completed on socket " << ctx->sock << std::endl;
 
             {   // <<<--------------->>>
@@ -703,6 +722,40 @@ private:
     }
 
     return 0;
+    }
+
+    void TimeoutSweeper(){
+    while(true){
+    Sleep(TIMEOUT_SWEEPER_POLL_RATE_MS);
+
+    auto now = std::chrono::steady_clock::now();
+
+    for(auto& sh : scmap.shards){
+    std::vector<SOCKET> time_out;
+        for(auto& s : sh.shard){
+            if(now - s.second.last_use > std::chrono::seconds(IDLE_TIMEOUT_S)){
+                time_out.push_back(s.first);
+            }
+        }
+        
+        // Close the expired sockets and erase their info
+        // Note: if IO begins on a socket after it has been deemed expired, the closure should result in 10038 on IO repost.
+        // At this point, any socket info put into the scmaps for that socket SHOULD be erased again by 10038 error handling.
+        for(SOCKET& s : time_out){
+            std::cout << "Socket " << s << " timed out" << std::endl;
+            closesocket(s);
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh.mtx);
+            sh.shard.erase(s);
+            }   // <<<--------------->>>
+            CmapShard_s * sh_s = scmap_s.GetShard(s);
+            {   // <<<--------------->>>
+            std::scoped_lock lock(sh_s->mtx);
+            sh_s->shard.erase(s);
+            }   // <<<--------------->>>
+        }
+    }
+    }
     }
 
     int StartServer(int PORT){
