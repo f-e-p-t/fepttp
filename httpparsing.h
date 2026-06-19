@@ -6,6 +6,7 @@
 #include <string_view>
 #include <charconv>
 #include <iostream>
+#include <algorithm>
 
 using namespace Config;
 using namespace Definitions;
@@ -32,6 +33,18 @@ public:
 
     void AddHeader(Header h){
         headers.push_back(h);
+    }
+
+    void SetHeader(std::string name, std::string value){
+        for(auto& h : headers){
+            if(h.name == name){ h.value = value; }
+        }
+    }
+
+    void DeleteHeader(std::string name){
+        headers.erase(std::remove_if(headers.begin(), headers.end(),
+            [&](const Header& h){ return h.name == name; }
+        ), headers.end());
     }
 
     std::string GetHeader(std::string_view name){

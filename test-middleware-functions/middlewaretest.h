@@ -13,6 +13,25 @@ HTTPReqRes Logger(HTTPRequest req, HTTPResponse res){
     return HTTPReqRes(req, res);
 }
 
+HTTPReqRes AddHeaderToReq(HTTPRequest req, HTTPResponse res){
+    Header h = Header("New-Header", "new header text");
+    req.AddHeader(h);
+    req.SetHeader("New-Header", "different new header text");
+    return HTTPReqRes(req, res);
+}
+
+HTTPReqRes DetectThatHeaderText(HTTPRequest req, HTTPResponse res){
+    if(req.GetHeader("New-Header") == "different new header text"){
+        res.AddHeader("Found-You", "found the req header with value \"different new header text\"");
+    }
+    return HTTPReqRes(req, res);
+}
+
+HTTPReqRes JaneMiddleware(HTTPRequest req, HTTPResponse res){
+    res.AddHeader("Jane-Middleware", "this header was added by Jane Middleware");
+    return HTTPReqRes(req, res);
+}
+
 HTTPReqRes JohnMiddleware(HTTPRequest req, HTTPResponse res){
     if(req.body.find("brazil nut") != std::string::npos){
         res.status_code = 403;
