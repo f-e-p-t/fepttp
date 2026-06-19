@@ -127,3 +127,11 @@ public:
         return res;
     }
 };
+
+class HTTPReqRes {
+public:
+    HTTPRequest req;
+    HTTPResponse res;
+
+    HTTPReqRes(HTTPRequest rst, HTTPResponse rsp) : req(rst), res(rsp) {}
+};

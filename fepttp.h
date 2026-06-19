@@ -3,8 +3,8 @@
 #include "definitions.h"
 #include "timeout.h"
 #include "httpparsing.h"
-#include "httpresponses.h"  
-#include "test-middleware-functions/middlewaretest.h"
+#include "httpresponses.h"
+#include "test-middleware-functions/middlewaretest.h"   
 #include <winsock2.h>
 #include <windows.h>
 #include <ws2tcpip.h>
@@ -186,6 +186,9 @@ public:
             }   // <<<--------------->>>
         }
     }
+
+    // Chain up functions to be run on each HTTP request. Signature HTTPReqRes (HTTPRequest, HTTPResponse)
+    std::vector<std::function<HTTPReqRes(HTTPRequest, HTTPResponse)>> chain;
 
 private:
     WSADATA wsa_data;
@@ -615,11 +618,15 @@ private:
                 }
             }
 
-            // Middleware ------------------------------
-            HTTPResponse res;
-            //res = Logger(req, res);
-            res = JohnMiddleware(req, res);
-            SendResponse(ctx->sock, res);
+            // Middleware -------------------------------------------
+            HTTPResponse res; HTTPReqRes pair = HTTPReqRes(req, res);
+
+            for(const auto& fn : chain){
+                pair = fn(pair.req, pair.res);
+            }
+
+            SendResponse(ctx->sock, pair.res);
+            // ------------------------------------------------------
 
             delete ctx;
             break;
