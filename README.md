@@ -7,9 +7,9 @@ FEPTTP is a lightweight single-header HTTP server for Windows built with C++. Th
 FEPTTP packages raw HTTP requests and responses into objects with methods to freely manipulate them.
 
 ## Function Chain
-- Custom request-handler (middleware) functions must take two parameters - an HTTPRequest object and an HTTPResponse objects.
-- After processing the two objects, the functions must return the request an response as a wrapped pair: HTTPReqRes(request, response).
-- The functions are pushed sequentially into the 'server.chain' vector, and the server executes them in that order when a request arrives.
+- Custom request-handler (middleware) functions must take two parameters - an HTTPRequest object and an HTTPResponse object.
+- After processing the two objects, the functions must return the request and response as a wrapped pair: HTTPReqRes(request, response).
+- Push the functions sequentially into the 'server.chain' vector. The server executes them in that order when a request arrives.
 
 ## Example Code
 Example code can be found in /example-usage.
