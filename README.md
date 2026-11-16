@@ -12,4 +12,4 @@ FEPTTP packages raw HTTP requests and responses into objects with methods to fre
 - Push the functions sequentially into the 'server.chain' vector. The server executes them in that order when a request arrives.
 
 ## Example Code
-Example code of a very simple web backend can be found in /example-usage.
+Example code can be found in /example-usage.
