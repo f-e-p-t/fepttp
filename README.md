@@ -1,7 +1,7 @@
 # FEPTTP
 
 ## Overview
-FEPTTP is a lightweight single-header HTTP server for Windows built with C++. The server uses *IO Completion Ports (IOCP)* for an asynchronous, non-blocking architecture with high throughput. It uses *HTTP1.1* only and requires *C++11* or later.
+FEPTTP is a lightweight single-header HTTP server for Windows built with C++. The server uses **IO Completion Ports (IOCP)** for an asynchronous, non-blocking architecture with high throughput. It uses **HTTP1.1** only and requires **C++11** or later.
 
 ## Requests and Reponses
 FEPTTP packages raw HTTP requests and responses into objects with methods to freely manipulate them.
