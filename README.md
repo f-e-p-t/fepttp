@@ -1,14 +1,15 @@
 # FEPTTP
 
 ## Overview
-FEPTTP is a lightweight single-header HTTP server for Windows built with C++. The server uses IO Completion Ports (IOCP) for an asynchronous, non-blocking architecture with high throughput.
+FEPTTP is a lightweight single-header HTTP server for Windows built with C++. The server uses *IO Completion Ports (IOCP)* for an asynchronous, non-blocking architecture with high throughput. It uses *HTTP1.1* only and requires *C++11* or later.
 
-## Requirements and Advice
-- This server needs C++11 or later and only uses HTTP1.1.
-- This project already contains the nlohmann json header. Beware of including it twice!
-- Delete the example-usage folder if necessary.
+## Requests and Reponses
+FEPTTP packages raw HTTP requests and responses into objects with methods to freely manipulate them.
 
-## Creating Backends
-Server settings including buffer sizes, idle timeout period, and displaying info in the terminal can be changed in configuration/config.h.
-FEPTTP packages raw HTTP requests and responses into objects. The objects have methods used to manipulate incoming requests and build outgoing responses. Response-building (middleware) functions must take two inputs - request and response - and return a pair. The pair is built with: HTTPReqRes(request, response).
-After creating a server object, put the functions in order into the server.chain vector. The server will execute them in sequence when a request arrives. Examples are in this repository at example-usage/.
+## Function Chain
+- Custom request-handler (middleware) functions must take two parameters - an HTTPRequest object and an HTTPResponse objects.
+- After processing the two objects, the functions must return the request an response as a wrapped pair: HTTPReqRes(request, response).
+- The functions are pushed sequentially into the 'server.chain' vector, and the server executes them in that order when a request arrives.
+
+## Example Code
+Example code can be found in /example-usage.
