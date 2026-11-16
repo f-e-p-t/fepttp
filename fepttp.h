@@ -186,6 +186,8 @@ public:
         }
     }
 
+    std::vector<std::string> cors;
+
     // Chain up functions to be run on each HTTP request. Signature HTTPReqRes (HTTPRequest, HTTPResponse)
     std::vector<std::function<HTTPReqRes(HTTPRequest, HTTPResponse)>> chain;
 
@@ -619,6 +621,11 @@ private:
 
             // Middleware -------------------------------------------
             HTTPResponse res; HTTPReqRes pair = HTTPReqRes(req, res);
+
+            // CORS
+            std::string_view origin = pair.req.GetHeader("origin");
+            auto it = std::find(cors.begin(), cors.end(), origin);
+            if(it != cors.end()){ pair.res.AddHeader("Access-Control-Allow-Origin", cors[std::distance(cors.begin(), it)]); }
 
             for(const auto& fn : chain){
                 pair = fn(pair.req, pair.res);
