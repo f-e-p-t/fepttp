@@ -2,11 +2,11 @@
 #include <string>
 
 namespace Config {
-    constexpr bool PRINT_NEW_SOCKETS = true;   // Print info about new socket connections to the terminal
-    constexpr bool PRINT_GRACEFUL_CLOSURES = true;   // Print info about graceful socket closures to the terminal
-    constexpr bool PRINT_REQS = true;          // Print incoming requests to the terminal
-    constexpr bool PRINT_SENDS = true;         // Print info about completed send operations to the terminal
-    constexpr bool PRINT_TIMEOUTS = true;      // Print info about socket timeouts to the terminal     
+    constexpr bool PRINT_NEW_SOCKETS = false;   // Print info about new socket connections to the terminal
+    constexpr bool PRINT_GRACEFUL_CLOSURES = false;   // Print info about graceful socket closures to the terminal
+    constexpr bool PRINT_REQS = false;          // Print incoming requests to the terminal
+    constexpr bool PRINT_SENDS = false;         // Print info about completed send operations to the terminal
+    constexpr bool PRINT_TIMEOUTS = false;      // Print info about socket timeouts to the terminal     
 
     constexpr int HOUSEKEEPER_POLL_RATE_MS = 10;   // Time (in ms) between each iteration of the housekeeping loop
 
@@ -18,20 +18,20 @@ namespace Config {
     constexpr int GQCSEX_MAX_INTAKE = 256;      // A cap on the number of completion packets that GetQueuedCompletionStatusEx can
                                                 // take in at once
 
-    constexpr int RECV_BUFFER_SIZE = 64;        // The size (in bytes) of the WSARecv buffer
+    constexpr int RECV_BUFFER_SIZE = 4096;        // The size (in bytes) of the WSARecv buffer
 
-    constexpr int SEND_BUFFER_SIZE = 64;        // Similarly for the WSASend buffer
+    constexpr int SEND_BUFFER_SIZE = 4096;        // Similarly for the WSASend buffer
 
     constexpr int CMAP_NUM_SHARDS = 256;        // The number of shards in the sharded connection maps. Set to 1? A single shard,
                                                 // hence a single mutex that every worker thread fights over. Set too high? Too many
                                                 // mutexes, so too much memory wasted. THIS MUST BE A POWER OF 2
 
-    constexpr int IO_RETRY_DELAY_MS = 2000;     // If posting an IO operation (for example, WSARecv) fails, the server will wait
+    constexpr int IO_RETRY_DELAY_MS = 50;     // If posting an IO operation (for example, WSARecv) fails, the server will wait
                                                 // this many milliseconds before retrying the operation
 
-    constexpr int REQ_HEADER_CAP = 16384;       // Reject incoming requests if their headers exceed this length
+    constexpr int REQ_HEADER_CAP = 65536;       // Reject incoming requests if their headers exceed this length
 
-    constexpr int REQ_BODY_CAP = 16384;         // Same for request bodies
+    constexpr int REQ_BODY_CAP = 65536;         // Same for request bodies
 
     constexpr int IDLE_TIMEOUT_S = 15;          // Time (in seconds) a socket may stay open before being closed automatically
 

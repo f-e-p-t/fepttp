@@ -7,6 +7,7 @@ int main(){
 
     server.cors.push_back("https://example.com");
 
+    server.chain.push_back(Logger);
     server.chain.push_back(JohnMiddleware);
 
     server.run();
