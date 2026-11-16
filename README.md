@@ -4,9 +4,9 @@
 FEPTTP is a lightweight single-header HTTP server for Windows built with C++. The server uses IO Completion Ports (IOCP) for an asynchronous, non-blocking architecture with high throughput.
 
 ## Requirements and Advice
-This server needs C++11 or later and only uses HTTP1.1.
-This project already contains the nlohmann json header. Beware of including it twice!
-Delete the example-usage folder if necessary.
+- This server needs C++11 or later and only uses HTTP1.1.
+- This project already contains the nlohmann json header. Beware of including it twice!
+- Delete the example-usage folder if necessary.
 
 ## Creating Backends
 Server settings including buffer sizes, idle timeout period, and displaying info in the terminal can be changed in configuration/config.h.
