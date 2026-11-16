@@ -1,5 +1,5 @@
-#include "../httpresponses.h"
-#include "../json.hpp"
+#include "../http-requests-responses/httpresponses.h"
+#include "../nlohmann-json-header/json.hpp"
 #include <iostream>
 
 using json = nlohmann::json;
@@ -20,13 +20,6 @@ HTTPReqRes AddHeaderToReq(HTTPRequest req, HTTPResponse res){
     return HTTPReqRes(req, res);
 }
 
-HTTPReqRes DetectThatHeaderText(HTTPRequest req, HTTPResponse res){
-    if(req.GetHeader("New-Header") == "different new header text"){
-        res.AddHeader("Found-You", "found the req header with value \"different new header text\"");
-    }
-    return HTTPReqRes(req, res);
-}
-
 HTTPReqRes JaneMiddleware(HTTPRequest req, HTTPResponse res){
     res.AddHeader("Jane-Middleware", "this header was added by Jane Middleware");
     return HTTPReqRes(req, res);
@@ -36,15 +29,15 @@ HTTPReqRes JohnMiddleware(HTTPRequest req, HTTPResponse res){
     if(req.body.find("brazil nut") != std::string::npos){
         res.status_code = 403;
         json j;
-        j["message"] = "Request rejected due to presence of brazil nuts";
+        j["message"] = "Request rejected due to presence of brazil nuts in body";
         res.ApplicationJSON(j.dump());
         return HTTPReqRes(req, res);
     }
 
     res.status_code = 200;
     json j;
-    j["request target"] = req.target;
-    j["subobject"]["Order of Alt(10)"] = 1814400;
+    j["your request target"] = req.target;
+    j["subobject"]["example number"] = 1814400;
     res.ApplicationJSON(j.dump());
     return HTTPReqRes(req, res);
 }

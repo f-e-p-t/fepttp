@@ -1,9 +1,7 @@
 #pragma once
-#include "config.h"
 #include <winsock2.h>
 #include <chrono>
 #include <functional>
-#include <iostream>
 
 namespace SetTimeout {
     enum CallbackType {

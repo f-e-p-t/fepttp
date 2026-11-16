@@ -1,6 +1,4 @@
 #pragma once
-#include "config.h"
-#include <iostream>
 
 // CHANGE MODULO TO BITWISE AND
 namespace Utils{

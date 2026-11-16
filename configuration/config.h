@@ -2,6 +2,12 @@
 #include <string>
 
 namespace Config {
+    constexpr bool PRINT_NEW_SOCKETS = true;   // Print info about new socket connections to the terminal
+    constexpr bool PRINT_GRACEFUL_CLOSURES = true;   // Print info about graceful socket closures to the terminal
+    constexpr bool PRINT_REQS = true;          // Print incoming requests to the terminal
+    constexpr bool PRINT_SENDS = true;         // Print info about completed send operations to the terminal
+    constexpr bool PRINT_TIMEOUTS = true;      // Print info about socket timeouts to the terminal     
+
     constexpr int HOUSEKEEPER_POLL_RATE_MS = 10;   // Time (in ms) between each iteration of the housekeeping loop
 
     constexpr int CONCURRENT_ACCEPTEXS = 256;   // There will always be this many AcceptExs waiting to be completed. This is achieved by

@@ -1,6 +1,6 @@
 #pragma once
-#include "config.h"
-#include "definitions.h"
+#include "../configuration/config.h"
+#include "../hardcoded-values/definitions.h"
 #include "httpparsing.h"
 #include <vector>
 #include <string>
