@@ -1,9 +1,6 @@
 #ifndef SERVER_CONFIG
 #define SERVER_CONFIG
 
-#include <cstdint>
-#include <string>
-
 namespace Config {
     // Print info about new socket connections to the terminal
     constexpr bool PRINT_NEW_SOCKETS = true;
