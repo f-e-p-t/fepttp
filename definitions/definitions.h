@@ -1,4 +1,6 @@
-#pragma once
+#ifndef SERVER_DEFINITIONS
+#define SERVER_DEFINITIONS
+
 #include <iostream>
 
 namespace Definitions {
@@ -17,3 +19,5 @@ namespace Definitions {
     
     constexpr int REQUEST_MALFORMED = 1;
 }
+
+#endif

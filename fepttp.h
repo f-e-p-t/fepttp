@@ -1,6 +1,6 @@
 #include "configuration/config.h"
 #include "utilities/utilities.h"
-#include "hardcoded-values/definitions.h"
+#include "definitions/definitions.h"
 #include "timeout/timeout.h"
 #include "http-requests-responses/httpparsing.h"
 #include "http-requests-responses/httpresponses.h"  
@@ -21,10 +21,6 @@
 
 using namespace Config;
 using namespace Definitions;
-
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "mswsock.lib")
-#pragma comment(lib, "kernel32.lib")
 
 enum OpType { Accept, Recv, Send };
 
@@ -746,7 +742,7 @@ private:
     for(auto& sh : scmap.shards){
     std::vector<SOCKET> time_out;
         for(auto& s : sh.shard){
-            if(now - s.second.last_use > std::chrono::seconds(IDLE_TIMEOUT_S)){
+            if(now - s.second.last_use > std::chrono::milliseconds(IDLE_TIMEOUT_MS)){
                 time_out.push_back(s.first);
             }
         }
@@ -774,6 +770,16 @@ private:
     int StartServer(int PORT){
         std::cout << "Starting server on port " << PORT << std::endl;
 
+        // Handle the config
+        if(HOUSEKEEPER_POLL_RATE_MS < 1){ std::cout << "Housekeeper polling rate must be a positive number of milliseconds" << std::endl; WSACleanup(); return 1; }
+        if(CONCURRENT_ACCEPTEXS < 1){ std::cout << "Number of concurrent AcceptEx posts must be a positive number" << std::endl; WSACleanup(); return 1; }
+        if(GQCSEX_MAX_INTAKE < 1){ std::cout << "GetQueuedCompletionStatusEx max intake must be a positive number" << std::endl; WSACleanup(); return 1; }
+        if(RECV_BUFFER_SIZE < 1 || SEND_BUFFER_SIZE < 1){ std::cout << "WSARecv and WSASend buffer sizes must be a positive number of bytes" << std::endl; WSACleanup(); return 1; }
+        if(IO_RETRY_DELAY_MS < 1){ std::cout << "IO retry delay must be a positive number of milliseconds" << std::endl; WSACleanup(); return 1; }
+        if(REQ_HEADER_CAP < 1 || REQ_BODY_CAP < 1){ std::cout << "Request header and body size caps must be positive numbers of bytes" << std::endl; WSACleanup(); return 1; }
+        if(IDLE_TIMEOUT_MS < 1){ std::cout << "Socket idle timeout must be a positive number of milliseconds" << std::endl; WSACleanup(); return 1; }
+        if(TIMEOUT_SWEEPER_POLL_RATE_MS < 1){ std::cout << "The timeout checking rate must be a positive number of milliseconds" << std::endl; WSACleanup(); return 1; }
+        if(CMAP_NUM_SHARDS < 1){ std::cout << "The number of cmap shards must be a positive power of 2" << std::endl; WSACleanup(); return 1; }
         // Initialise WSA
         if(WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0){
             std::cout << "WSA Startup failed. Error: " << WSAGetLastError() << std::endl; WSACleanup(); return 1;

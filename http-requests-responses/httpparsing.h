@@ -1,6 +1,8 @@
-#pragma once
+#ifndef HTTP_PARSING
+#define HTTP_PARSING
+
 #include "../configuration/config.h"
-#include "../hardcoded-values/definitions.h"
+#include "../definitions/definitions.h"
 #include <vector>
 #include <string>
 #include <string_view>
@@ -171,3 +173,5 @@ public:
 };
 
 HTTPParser parser;
+
+#endif

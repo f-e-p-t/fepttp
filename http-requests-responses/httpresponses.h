@@ -1,6 +1,8 @@
-#pragma once
+#ifndef HTTP_RESPONSES
+#define HTTP_RESPONSES
+
 #include "../configuration/config.h"
-#include "../hardcoded-values/definitions.h"
+#include "../definitions/definitions.h"
 #include "httpparsing.h"
 #include <vector>
 #include <string>
@@ -135,3 +137,5 @@ public:
 
     HTTPReqRes(HTTPRequest rst, HTTPResponse rsp) : req(rst), res(rsp) {}
 };
+
+#endif
